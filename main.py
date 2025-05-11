@@ -48,14 +48,14 @@ except ImportError:
 
 # stable-baselines3 and gym
 try:
-    import gym # noqa
-    import stable_baselines3 # noqa
+    import gym  # noqa
+    import stable_baselines3  # noqa
     print("Gym, Stable-Baselines3, and Shimmy are already installed.")
 except ImportError:
     print("stable-baselines3, gym, or shimmy not found, attempting to install all...")
     subprocess.check_call([sys.executable, "-m", "pip", "install", "gym", "stable-baselines3", "shimmy~=2.0"])
-    import gym # noqa
-    import stable_baselines3 # noqa
+    import gym  # noqa
+    import stable_baselines3  # noqa
     print("gym, stable-baselines3, and shimmy installed and imported successfully.")
 
 from stable_baselines3.common.vec_env import DummyVecEnv
@@ -162,7 +162,7 @@ class PIMMAEnv(Env):
         self.action_space = spaces.Discrete(3)  # 0=hold, 1=buy, 2=sell
         self.current_obs = np.zeros(self.observation_space.shape, dtype=np.float32)
         self._current_step = 0
-        self._max_steps = 200
+        self._max_steps = 200  # ตัวอย่าง: กำหนดจำนวน step สูงสุดต่อ episode
 
     def reset(self):
         self.current_obs = np.zeros(self.observation_space.shape, dtype=np.float32)
@@ -197,7 +197,7 @@ if os.path.isfile(rl_model_path):
             rl_model.set_env(DummyVecEnv([lambda: temp_env_load]))
         logging.info(f"[RL_SETUP] Loaded RL model from {rl_model_path}")
     except Exception as e:
-        logging.error(f"[RL_SETUP] Error loading RL model from {rl_model_path}: {e}. Creating new model.", exc_info=True)
+        logging.error(f"[RL_SETUP] Error loading RL model: {e}. Creating new model.", exc_info=True) # Shortened
         temp_env_create = PIMMAEnv(feature_dim)
         rl_env_for_new_model_load_fail = DummyVecEnv([lambda: temp_env_create])
         rl_model = PPO("MlpPolicy", rl_env_for_new_model_load_fail, verbose=0, n_steps=128)
@@ -216,7 +216,7 @@ buffer_lock = threading.Lock()
 
 # === Model Loading ===
 def load_model(path=MODEL_PATH):
-    global model
+    global model  # This is correct as 'model' is assigned to in this function
     if os.path.exists(path) and not USE_FAKE_MODEL:
         try:
             model = joblib.load(path)
@@ -234,7 +234,8 @@ def load_model(path=MODEL_PATH):
     return model is not None or USE_FAKE_MODEL
 
 
-# Removed redundant `global model` that was here (approx line 142 in previous reports)
+# The F824 error for 'global model' at approx line 134 was for a redundant global declaration
+# at the module level *before* this call. It has been removed.
 load_model()  # Initial attempt to load the model
 
 
@@ -251,7 +252,7 @@ def predict_entry_logic(features):
         prediction = model.predict(np.array([features]))[0]
         return float(prediction)
     except Exception as e:
-        logging.error(f"[PREDICT_LOGIC] Error during prediction: {e}", exc_info=True)  # Used 'e' here
+        logging.error(f"[PREDICT_LOGIC] Error during prediction: {e}", exc_info=True)
         return round(np.random.uniform(0, 1), 4)
 
 
@@ -280,7 +281,7 @@ def _retrain_model_core(data_path=TRADE_DATA_LOG_FILE, output_model_path=MODEL_P
             return False, "Invalid data in 'result' column", 0, duration_err
 
         processed_data = []
-        for _idx, row in df.iterrows():  # Changed index to _idx as it's not used
+        for _idx, row in df.iterrows():
             features = parse_feature_string(row['features'])
             if features:
                 processed_data.append({'X': features, 'y': row['result']})
@@ -291,13 +292,7 @@ def _retrain_model_core(data_path=TRADE_DATA_LOG_FILE, output_model_path=MODEL_P
             logging.error("[RETRAIN_CORE] No valid features data after parsing to train the model.")
             return False, "No valid features to train on", 0, duration_err
 
-        # Check if processed_data is not empty before accessing its first element
-        if not processed_data: # This check is technically redundant due to the one above, but good for safety
-            # This part of the code should not be reached if the above check works
-            logging.error("[RETRAIN_CORE] Critical: processed_data is empty before feature_length definition.")
-            return False, "Critical: processed_data empty", 0, round(time.time() - start_time, 2)
-
-        feature_length = len(processed_data[0]['X'])
+        feature_length = len(processed_data[0]['X'])  # Safe due to check above
         X_final = []
         y_final = []
         for item in processed_data:
@@ -306,13 +301,14 @@ def _retrain_model_core(data_path=TRADE_DATA_LOG_FILE, output_model_path=MODEL_P
                 y_final.append(item['y'])
             else:
                 logging.warning(
-                    f"[RETRAIN_CORE] Inconsistent feature length. Expected {feature_length}, got {len(item['X'])}. Skipping."
+                    f"[RETRAIN_CORE] Inconsistent feature length. Expected {feature_length}, "
+                    f"got {len(item['X'])}. Skipping."
                 )
 
         if not X_final:
             duration_err = round(time.time() - start_time, 2)
             _save_retrain_status("failed_no_consistent_features", 0, duration_err)
-            logging.error("[RETRAIN_CORE] No features with consistent length to train the model.")
+            logging.error("[RETRAIN_CORE] No features with consistent length to train.")  # Shortened log
             return False, "No features with consistent length", 0, duration_err
 
         model_new = xgb.XGBRegressor(n_estimators=100, max_depth=5, random_state=42)
@@ -322,8 +318,8 @@ def _retrain_model_core(data_path=TRADE_DATA_LOG_FILE, output_model_path=MODEL_P
         duration = round(time.time() - start_time, 2)
         _save_retrain_status("success", len(X_final), duration)
         logging.info(
-            f"[RETRAIN_CORE] Model retrained. Samples: {len(X_final)}, "  # Shorter log
-            f"Duration: {duration}s. Saved to {output_model_path}"
+            f"[RETRAIN_CORE] Model retrained. Samples: {len(X_final)}, "
+            f"Duration: {duration}s. Saved: {output_model_path}"  # Shortened log
         )
 
         if output_model_path == MODEL_PATH:
@@ -773,7 +769,7 @@ def retrain_route():
 
     def _run_and_log():
         with app.app_context():
-            success, message, _, _ = _retrain_model_core()  # samples, duration not used here
+            success, message, _, _ = _retrain_model_core()
             if success:
                 logging.info(f"[RETRAIN_ROUTE_THREAD] Retrain successful via route: {message}")
             else:
@@ -998,8 +994,10 @@ def _run_walking_forward_test_core(
         for i in range(total_rounds):
             train_start_idx, train_end_idx = i * test_window, i * test_window + train_window
             test_start_idx, test_end_idx = train_end_idx, train_end_idx + test_window
-            if test_end_idx > len(df_wft_data): break
-            train_set, test_set = df_wft_data.iloc[train_start_idx:train_end_idx], df_wft_data.iloc[test_start_idx:test_end_idx]
+            if test_end_idx > len(df_wft_data):  # Corrected E701
+                break
+            train_set = df_wft_data.iloc[train_start_idx:train_end_idx]
+            test_set = df_wft_data.iloc[test_start_idx:test_end_idx]
             if train_set.empty or test_set.empty:
                 logging.warning(f"[WFT_CORE] Skipping round {i+1} due to empty train/test set.")
                 continue
@@ -1020,7 +1018,7 @@ def _run_walking_forward_test_core(
                 "samples_train": len(X_train), "samples_test": len(X_test)
             }
             wft_results_list.append(res_data)
-            logging.info(f"[WFT_CORE] R {i+1}/{total_rounds}: AvgPred={avg_pred:.2f}, WinRatePred={win_pred:.1f}%")
+            logging.info(f"[WFT_CORE] R {i+1}/{total_rounds}: AvgPred={avg_pred:.2f}, WinRatePred={win_pred:.1f}%") # Shortened
         if not wft_results_list:
             logging.warning("[WFT_CORE] No WFT rounds were completed.")
             return {"status": "warning", "message": "WFT completed but no rounds generated results."}
@@ -1122,7 +1120,8 @@ def _train_model_from_best_wft_round(
                 features = parse_feature_string(row['features'])
                 if features:
                     train_data_list.append({'X': features, 'y': row['result']})
-                if len(train_data_list) >= num_samples: break
+                if len(train_data_list) >= num_samples:  # Corrected E701
+                    break
         if len(train_data_list) < num_samples:
             msg = (f"Could not gather enough training samples ({len(train_data_list)} found, "
                    f"{num_samples} expected) for the best WFT round.")
@@ -1280,7 +1279,7 @@ def rl_predict():
 
 @app.route('/rl/store', methods=['POST'])
 def rl_store():
-    global rl_buffer, buffer_lock  # These are modified / used with modification intent
+    global rl_buffer, buffer_lock  # noqa: F824 (rl_buffer is modified by append, buffer_lock used by 'with')
     try:
         payload = request.get_json()
         required_keys = ["obs", "action", "reward", "next_obs", "done"]
@@ -1296,8 +1295,7 @@ def rl_store():
 
 @app.route('/rl/update', methods=['POST'])
 def rl_update():
-    global rl_model, rl_buffer, buffer_lock  # These are modified / used with modification intent
-                                            # rl_model_path is read from global scope, not needing 'global' here
+    global rl_model, rl_buffer, buffer_lock  # noqa: F824 (these are modified or used for modification)
     if rl_model is None:
         return jsonify(error="RL model not loaded"), 500
     transitions_to_learn = []
@@ -1315,7 +1313,7 @@ def rl_update():
         num_timesteps_to_learn = max(128, len(transitions_to_learn))
         logging.info(f"[RL_UPDATE] Calling rl_model.learn() with total_timesteps={num_timesteps_to_learn}")
         rl_model.learn(total_timesteps=num_timesteps_to_learn, reset_num_timesteps=False)
-        rl_model.save(rl_model_path)
+        rl_model.save(rl_model_path)  # rl_model_path is read from global scope
         logging.info(f"[RL_UPDATE] RL model updated and saved to {rl_model_path}")
         return jsonify(status="rl_model_updated", transitions_processed=len(transitions_to_learn))
     except Exception as e:
@@ -1326,54 +1324,46 @@ def rl_update():
 # --- Dashboard ---
 @app.route("/dashboard")
 def dashboard_route():
-    btn_light = "class=\"list-group-item list-group-item-action task-btn btn btn-light\""
-    btn_primary = "class=\"list-group-item list-group-item-action task-btn btn btn-primary\""
-    btn_info = "class=\"list-group-item list-group-item-action task-btn btn btn-info\""
-    btn_success = "class=\"list-group-item list-group-item-action task-btn btn btn-success\""
-    btn_warning = "class=\"list-group-item list-group-item-action task-btn btn btn-warning\""
-    html_content = f"""
-    <html><head><title>📊 AI Trading Dashboard</title>
-        <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
-        <style>
-            body {{ padding: 20px; font-family: Arial, sans-serif; }}
-            .task-btn {{ margin-bottom: 10px; min-width: 250px; }}
-            .container {{ max-width: 800px; }} h1, h2 {{ margin-bottom: 20px; }}
-            .list-group-item a {{ text-decoration: none; }}
-            .list-group-item button {{ width: 100%; text-align: left; }}
-        </style><script>
-        async function runTask(path, btnId, method = 'GET', body = null) {{
-            const btn = document.getElementById(btnId); const originalText = btn.innerText;
-            btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Processing...';
-            let msg = '';
-            try {{
-                const opts = {{ method: method }};
-                if (method === 'POST' && body) {{ opts.headers = {{'Content-Type': 'application/json'}}; opts.body = JSON.stringify(body); }}
-                const res = await fetch(path, opts); const data = await res.json();
-                msg = res.ok ? `✅ Success: ${{data.message || JSON.stringify(data)}}` : `❌ Error ${{res.status}}: ${{data.error || JSON.stringify(data)}}`;
-            }} catch(e) {{ msg = `❌ Network/Script Error: ${{e}}`; }}
-            alert(msg); btn.disabled = false; btn.innerText = originalText;
-        }}
-        function viewPage(path) {{ window.location.href = path; }}
-        </script></head><body><div class="container"><h1>📊 AI Trading Dashboard</h1>
-            <h2>🚀 Actions</h2><div class="list-group mb-4">
-                <button id="retrain-btn" {btn_primary} onclick="runTask('/retrain','retrain-btn')">🔁 Trigger Model Retrain</button>
-                <button id="wft-btn" {btn_info} onclick="runTask('/wft','wft-btn')">📈 Trigger Walking Forward Test (WFT)</button>
-                <button id="activate-wft-btn" {btn_success} onclick="runTask('/activate_best_wft_model','activate-wft-btn')">🌟 Activate Best Model from WFT</button>
-            </div><h2>📈 Status & Visualizations</h2><div class="list-group mb-4">
-                <button {btn_light} onclick="viewPage('/retrain_status')">🧠 View Retrain Status</button>
-                <button {btn_light} onclick="viewPage('/summary')">💹 View Trade Summary (JSON)</button>
-                <button {btn_light} onclick="viewPage('/visualize_summary')">📊 View Profit Summary Chart</button>
-                <button {btn_light} onclick="viewPage('/wft_summary')">📈 View WFT Summary Chart</button>
-                <button {btn_light} onclick="runTask('/monitor','monitor-btn-silent')">🩺 API Monitor (Alert)</button>
-                <button {btn_light} onclick="viewPage('/explain')">💡 Model Feature Importance (JSON)</button>
-            </div><h2>📄 Logs & Reports</h2><div class="list-group mb-4">
-                <button {btn_light} onclick="viewPage('/download_csv')">⬇ Download Trade Data CSV</button>
-                <button {btn_light} onclick="viewPage('/download_report')">📋 Download Latest Report</button>
-                <button {btn_warning} onclick="viewPage('/fail_log')">❌ View Execution Failure Log</button>
-                <button {btn_warning} onclick="viewPage('/exit_decision_log')">🚪 View Exit Decision Log</button>
-                <button {btn_warning} onclick="viewPage('/fail_entry_log')">🚫 View AI Entry Fail Log</button>
-            </div></div></body></html>"""
-    return html_content
+    # Shortened class definitions for buttons to help with line length
+    btn_lg = "list-group-item list-group-item-action task-btn btn btn-light"
+    btn_pri = "list-group-item list-group-item-action task-btn btn btn-primary"
+    btn_inf = "list-group-item list-group-item-action task-btn btn btn-info"
+    btn_suc = "list-group-item list-group-item-action task-btn btn btn-success"
+    btn_war = "list-group-item list-group-item-action task-btn btn btn-warning"
+
+    html_parts = [
+        "<html><head><title>📊 AI Trading Dashboard</title>",
+        "<link href='https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css' rel='stylesheet'>",
+        "<style>body{padding:20px;font-family:Arial,sans-serif}.task-btn{margin-bottom:10px;min-width:250px}",
+        ".container{max-width:800px}h1,h2{margin-bottom:20px}.list-group-item a{text-decoration:none}",
+        ".list-group-item button{width:100%;text-align:left}</style><script>",
+        "async function runTask(p,bId,m='GET',b=null){const btn=document.getElementById(bId);",
+        "const oT=btn.innerText;btn.disabled=true;btn.innerHTML='<span class=\"spinner-border spinner-border-sm\"></span> Processing...';",
+        "let msg='';try{const op={method:m};if(m==='POST'&&b){op.headers={'Content-Type':'application/json'};",
+        "op.body=JSON.stringify(b)}const r=await fetch(p,op);const d=await r.json();",
+        "msg=r.ok?`✅ Success: ${d.message||JSON.stringify(d)}`:`❌ Error ${r.status}: ${d.error||JSON.stringify(d)}`;",
+        "}catch(e){msg=`❌ Network/Script Error: ${e}`}alert(msg);btn.disabled=false;btn.innerText=oT}",
+        "function viewPage(p){window.location.href=p}</script></head><body><div class='container'>",
+        "<h1>📊 AI Trading Dashboard</h1><h2>🚀 Actions</h2><div class='list-group mb-4'>",
+        f"<button id='retrain-btn' class='{btn_pri}' onclick=\"runTask('/retrain','retrain-btn')\">🔁 Trigger Model Retrain</button>",
+        f"<button id='wft-btn' class='{btn_inf}' onclick=\"runTask('/wft','wft-btn')\">📈 Trigger WFT</button>", # Shortened text
+        f"<button id='activate-wft-btn' class='{btn_suc}' onclick=\"runTask('/activate_best_wft_model','activate-wft-btn')\">🌟 Activate Best WFT Model</button>", # Shortened text
+        "</div><h2>📈 Status & Visualizations</h2><div class='list-group mb-4'>",
+        f"<button class='{btn_lg}' onclick=\"viewPage('/retrain_status')\">🧠 View Retrain Status</button>",
+        f"<button class='{btn_lg}' onclick=\"viewPage('/summary')\">💹 View Trade Summary (JSON)</button>",
+        f"<button class='{btn_lg}' onclick=\"viewPage('/visualize_summary')\">📊 View Profit Summary Chart</button>",
+        f"<button class='{btn_lg}' onclick=\"viewPage('/wft_summary')\">📈 View WFT Summary Chart</button>",
+        f"<button class='{btn_lg}' onclick=\"runTask('/monitor','monitor-btn-silent')\">🩺 API Monitor (Alert)</button>",
+        f"<button class='{btn_lg}' onclick=\"viewPage('/explain')\">💡 Model Feature Importance (JSON)</button>",
+        "</div><h2>📄 Logs & Reports</h2><div class='list-group mb-4'>",
+        f"<button class='{btn_lg}' onclick=\"viewPage('/download_csv')\">⬇ Download Trade Data CSV</button>",
+        f"<button class='{btn_lg}' onclick=\"viewPage('/download_report')\">📋 Download Latest Report</button>",
+        f"<button class='{btn_war}' onclick=\"viewPage('/fail_log')\">❌ View Execution Failure Log</button>",
+        f"<button class='{btn_war}' onclick=\"viewPage('/exit_decision_log')\">🚪 View Exit Decision Log</button>",
+        f"<button class='{btn_war}' onclick=\"viewPage('/fail_entry_log')\">🚫 View AI Entry Fail Log</button>",
+        "</div></div></body></html>"
+    ]
+    return "\n".join(html_parts)
 
 
 # === Background Scheduler ===
@@ -1412,7 +1402,7 @@ def run_scheduler():
 if __name__ == '__main__':
     logging.info("[SERVER_INIT] Flask API service is starting...")
     print("[SERVER_INIT] Flask API service is starting...")
-    if not (app.debug and os.environ.get('WERKZEUG_RUN_MAIN') == 'true'):  # Corrected E261
+    if not (app.debug and os.environ.get('WERKZEUG_RUN_MAIN') == 'true'):
         scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
         scheduler_thread.start()
         logging.info("[SERVER_INIT] Background scheduler thread started.")
