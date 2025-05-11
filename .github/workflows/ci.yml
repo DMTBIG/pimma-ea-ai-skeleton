@@ -8,36 +8,35 @@ on:
 
 jobs:
   lint-and-compile:
-    name: Lint Python & Compile MQL5 EA
     runs-on: ubuntu-latest
     steps:
-      # 1) เช็คเอาท์โค้ด
       - uses: actions/checkout@v3
 
-      # 2) ติดตั้ง Python 3.10
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      # 3) ติดตั้ง dependencies
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 4) ตรวจ style ด้วย flake8 (ไม่ fail CI ถ้าอยากแค่เตือน ลบ continue-on-error ออก)
       - name: Lint with flake8
         run: |
           pip install flake8
           flake8 . --max-line-length=120
         continue-on-error: true
 
-      # 5) ให้สคริปต์ compile_mql5.sh เป็น executable
       - name: Make compile script executable
         run: chmod +x ./compile_mql5.sh
 
-      # 6) รันสคริปต์คอมไพล์ MQL5
+      - name: Install Wine
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y wine wine32 wine64
+
       - name: Compile MQL5 EA and Includes
         run: bash ./compile_mql5.sh
 
