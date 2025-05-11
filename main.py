@@ -139,7 +139,7 @@ def _save_retrain_status(status, samples_used, duration_seconds, file_path=LAST_
 # === Reinforcement Learning (RL) Setup ===
 
 def _initialize_shap_explainer():
-    global model, explainer  # ใช้ model ที่เป็น global XGBoost model ของเรา
+    global model, explainer  # model is global and potentially modified elsewhere, explainer is assigned here
     if model is not None and isinstance(model, xgb.XGBModel):  # ตรวจสอบว่าเป็น XGBoost model
         try:
             explainer = shap.TreeExplainer(model)
@@ -153,9 +153,7 @@ def _initialize_shap_explainer():
             "SHAP TreeExplainer might not be optimal or work. "
             "Consider other SHAP explainers if needed."
         )
-        # อาจจะลองใช้ KernelExplainer หรือ DeepExplainer สำหรับโมเดลประเภทอื่น
-        # หรือปล่อยให้เป็น None ถ้า TreeExplainer ไม่เหมาะสม
-        explainer = None  # หรือจะลอง explainer = shap.Explainer(model) ถ้า SHAP รองรับอัตโนมัติ
+        explainer = None
     else:
         explainer = None
         logging.info("[SHAP_INIT] Main model not loaded. SHAP explainer not initialized.")
@@ -167,9 +165,9 @@ os.makedirs(MODEL_FOLDER, exist_ok=True)  # สร้างโฟลเดอร
 
 # สร้าง environment แบบง่าย
 class PIMMAEnv(Env):
-    def __init__(self, feature_dim):
+    def __init__(self, feature_dim_env):
         super().__init__()
-        self.observation_space = spaces.Box(-np.inf, np.inf, shape=(feature_dim,), dtype=np.float32)
+        self.observation_space = spaces.Box(-np.inf, np.inf, shape=(feature_dim_env,), dtype=np.float32)
         self.action_space = spaces.Discrete(3)  # 0=hold, 1=buy, 2=sell
         self.current_obs = np.zeros(self.observation_space.shape, dtype=np.float32)  # Ensure float32
         self._current_step = 0
@@ -181,25 +179,10 @@ class PIMMAEnv(Env):
         return self.current_obs
 
     def step(self, action):
-        # ในการใช้งานจริง ส่วนนี้จะซับซ้อนกว่านี้มาก
-        # ต้องมีการอัปเดต self.current_obs ด้วยข้อมูลใหม่จากตลาด
-        # และคำนวณ reward จากผลของการ action นั้นๆ
-
-        # สำหรับตอนนี้ ใช้ dummy reward และ next_obs คือ obs เดิม
-        # และ done จะเป็น True ถ้าถึง _max_steps (เพื่อให้ learn() จบได้)
         self._current_step += 1
         reward = np.random.rand() - 0.5  # Dummy reward: random -0.5 to 0.5
-
-        # ถ้า MQL ส่ง next_obs มาใน /rl/store, อาจจะไม่ต้องอัปเดต current_obs ที่นี่มากนัก
-        # แต่ PPO.learn() จะเรียก step() นี้ซ้ำๆ เพื่อเก็บ rollouts
-        # ดังนั้น PIMMAEnv ควรจะสามารถ simulate environment ได้ในระดับหนึ่ง
-        # หรือคุณต้องมีวิธี map ข้อมูลจาก rl_buffer เข้าไปใน PPO.learn() โดยตรง (ซึ่งซับซ้อนกว่า)
-
-        # Placeholder: สร้าง next_obs แบบสุ่มเล็กน้อยจาก current_obs
-        # ในการใช้งานจริง next_obs ควรมาจากข้อมูลตลาดหลังจาก action
         next_obs = self.current_obs + np.random.normal(0, 0.1, self.current_obs.shape).astype(np.float32)
         self.current_obs = next_obs  # อัปเดต current_obs สำหรับ step ถัดไป
-
         done = self._current_step >= self._max_steps
         info = {}
         return self.current_obs, reward, done, info
@@ -212,22 +195,13 @@ class PIMMAEnv(Env):
 
 
 # โหลดหรือสร้าง policy
-feature_dim = 45  # เท่ากับจำนวนฟีเจอร์
+feature_dim = 45  # เท่ากับจำนวนฟีเจอร์ (used by PIMMAEnv and rl_predict)
 rl_model_path = os.path.join(MODEL_FOLDER, "rl_model.zip")
-
-# สร้าง VecEnv ก่อนส่งให้ PPO
-# PPO ใน stable-baselines3 มักจะทำงานกับ VecEnv
-# ถ้า PIMMAEnv ของคุณซับซ้อน อาจจะต้อง wrap ด้วย DummyVecEnv หรือ SubprocVecEnv
-# แต่ถ้า PIMMAEnv ถูกออกแบบให้ PPO.learn() เรียกใช้โดยตรง ก็อาจจะไม่ต้อง wrap ตอนสร้างโมเดล
-# อย่างไรก็ตาม การใช้ VecEnv เป็น practice ที่ดี
-# rl_env_instance = PIMMAEnv(feature_dim)
-# rl_env = DummyVecEnv([lambda: rl_env_instance]) # Wrap it
+rl_model = None # Initialize rl_model
 
 if os.path.isfile(rl_model_path):
     try:
-        # rl_model = PPO.load(rl_model_path, env=rl_env) # ถ้า PIMMAEnv ไม่ถูก save/load พร้อม model
-        rl_model = PPO.load(rl_model_path)  # ถ้า env ถูก save ไปกับ model หรือจะ set ทีหลัง
-        # ถ้า env ไม่ได้ถูก load มาด้วย, ต้อง set ใหม่:
+        rl_model = PPO.load(rl_model_path)
         if rl_model.get_env() is None:
             temp_env = PIMMAEnv(feature_dim)
             rl_model.set_env(DummyVecEnv([lambda: temp_env]))
@@ -236,13 +210,13 @@ if os.path.isfile(rl_model_path):
         logging.error(f"[RL_SETUP] Error loading RL model from {rl_model_path}: {e}. Creating new model.", exc_info=True)
         temp_env = PIMMAEnv(feature_dim)
         rl_env_for_new_model = DummyVecEnv([lambda: temp_env])
-        rl_model = PPO("MlpPolicy", rl_env_for_new_model, verbose=0, n_steps=128)  # n_steps เป็น hyperparam สำคัญ
+        rl_model = PPO("MlpPolicy", rl_env_for_new_model, verbose=0, n_steps=128)
         rl_model.save(rl_model_path)
         logging.info(f"[RL_SETUP] Created and saved new RL model to {rl_model_path}")
 else:
     temp_env = PIMMAEnv(feature_dim)
     rl_env_for_new_model = DummyVecEnv([lambda: temp_env])
-    rl_model = PPO("MlpPolicy", rl_env_for_new_model, verbose=0, n_steps=128)  # ปรับ n_steps ตามความเหมาะสม
+    rl_model = PPO("MlpPolicy", rl_env_for_new_model, verbose=0, n_steps=128)
     rl_model.save(rl_model_path)
     logging.info(f"[RL_SETUP] New RL model created and saved to {rl_model_path}")
 
@@ -253,72 +227,30 @@ buffer_lock = threading.Lock()
 
 
 # === Model Loading ===
-# This function is duplicated later, removing this first instance.
-# def load_model(path=MODEL_PATH):
-# """Loads the XGBoost model from the specified path."""
-# global model
-# if os.path.exists(path) and not USE_FAKE_MODEL:
-# try:
-# model = joblib.load(path)
-# logging.info(f"[MODEL STATUS] ✅ Model loaded successfully from {path}.")
-# return True
-# except Exception as e:
-# logging.error(f"[MODEL STATUS] ❌ Failed to load model from {path}", exc_info=True)
-# model = None
-# return False
-# elif USE_FAKE_MODEL:
-# logging.warning("[MODEL STATUS] ⚠️ Using FAKE model as per configuration.")
-# model = None # Ensure model is None if fake is used, predict_entry will handle it
-# return True # Faking is a valid state
-# else:
-# logging.warning(f"[MODEL STATUS] ⚠️ Model file not found at {path}. Waiting for retrain or WFT best model activation.")
-# model = None
-# return False
-#
-# load_model() # Initial attempt to load the model
-
-
 def load_model(path=MODEL_PATH):
-    global model  # 'explainer' จะถูกจัดการโดย _initialize_shap_explainer ซึ่งใช้ global 'explainer'
-
-    # model_actually_loaded = False # ตั้งค่าเริ่มต้นสถานะการโหลดโมเดลจริง # F841: local variable 'model_actually_loaded' is assigned to but never used
-
+    global model  # model is assigned here
     if os.path.exists(path) and not USE_FAKE_MODEL:
         try:
             model = joblib.load(path)
             logging.info(f"[MODEL STATUS] ✅ Real model loaded successfully from {path}.")
-            # model_actually_loaded = True
         except Exception as e:
-            logging.error(f"[MODEL STATUS] ❌ Failed to load real model from {path}", exc_info=True)
-            model = None  # หากโหลดไม่สำเร็จ ให้ model เป็น None
-            # model_actually_loaded = False
-
+            logging.error(f"[MODEL STATUS] ❌ Failed to load real model from {path}: {e}", exc_info=True)
+            model = None
     elif USE_FAKE_MODEL:
         logging.warning("[MODEL STATUS] ⚠️ Using FAKE model as per configuration.")
-        model = None  # ถ้าใช้ FAKE model ก็ไม่มีโมเดลจริงโหลด
-        # สำหรับการ return ของฟังก์ชัน อาจจะถือว่า "สำเร็จ" เพราะเราตั้งใจใช้ fake model
-        # หรือจะ return ค่าที่บ่งบอกว่าใช้ fake model ก็ได้ ขึ้นอยู่กับการออกแบบ
-        # ในที่นี้จะให้ model_actually_loaded เป็น False เพราะไม่มี "โมเดลจริง" โหลด
-        # model_actually_loaded = False # หรือ True ถ้าคุณมองว่าการใช้ fake model คือ "โหลดสำเร็จ" แบบหนึ่ง
-
-    else:  # กรณีไฟล์ไม่พบ และไม่ได้ใช้ fake model
+        model = None
+    else:
         logging.warning(f"[MODEL STATUS] ⚠️ Model file not found at {path} and not using FAKE model.")
         model = None
-        # model_actually_loaded = False
 
-    # เรียก _initialize_shap_explainer() หนึ่งครั้งในตอนท้าย
-    # เพื่อให้ explainer ถูกตั้งค่าตามสถานะล่าสุดของ global 'model'
     _initialize_shap_explainer()
 
-    # การ return ค่าของฟังก์ชัน load_model:
-    # อาจจะ return boolean ที่บอกว่า "มีโมเดลพร้อมใช้งานหรือไม่ (รวม fake model)"
-    # หรือ "โมเดลจริงถูกโหลดสำเร็จหรือไม่"
-    # ตัวอย่าง: ถ้าต้องการให้ฟังก์ชันบอกว่ามีโมเดล (จริงหรือ fake) พร้อมใช้งานหรือไม่:
     if model is not None or USE_FAKE_MODEL:
-        return True  # มีโมเดลจริงโหลด หรือ ตั้งใจใช้ fake model
-    return False  # ไม่มีโมเดลจริง และไม่ได้ตั้งใจใช้ fake model
+        return True
+    return False
 
 
+# global model # This line (./main.py:142:5) is redundant as load_model handles the global
 load_model()  # Initial attempt to load the model
 
 
@@ -329,28 +261,23 @@ def predict_entry_logic(features):
         logging.info("[PREDICT_LOGIC] Using fake model or model not loaded. Returning random prediction.")
         return round(np.random.uniform(0, 1), 4)
     try:
-        # Ensure features is a list of floats
         if not isinstance(features, list) or not all(isinstance(f, (int, float)) for f in features):
             logging.error(f"[PREDICT_LOGIC] Invalid features format: {features}. Expected list of numbers.")
-            # Fallback to fake prediction if features are malformed
             return round(np.random.uniform(0, 1), 4)
 
-        prediction = model.predict(np.array([features]))[0]  # XGBoost expects 2D array
-        return float(prediction)  # Ensure it's a Python float
-    except Exception as e:  # F841: local variable 'e' is assigned to but never used (will log it)
+        prediction = model.predict(np.array([features]))[0]
+        return float(prediction)
+    except Exception as e: # Error ./main.py:291:9: F841 was here
         logging.error(f"[PREDICT_LOGIC] Error during prediction: {e}", exc_info=True)
-        # Fallback to fake prediction on error
         return round(np.random.uniform(0, 1), 4)
 
 
 def _retrain_model_core(data_path=TRADE_DATA_LOG_FILE, output_model_path=MODEL_PATH):
     """Core logic for retraining the model."""
-    start_time = time.time()  # ย้าย start_time มาอยู่นอก try หรือบรรทัดแรกใน try ก็ได้
-    # ถ้าอยู่นอก try จะทำให้คำนวณ duration ได้แม้เกิด error ก่อนเริ่ม try
-    try:  # <--- try block หลักของฟังก์ชัน
-        # --- ส่วนที่ 1: โหลดและตรวจสอบข้อมูล ---
+    start_time = time.time()
+    try:
         if not os.path.exists(data_path):
-            _save_retrain_status("failed_no_file", 0, 0)  # duration เป็น 0 เพราะยังไม่ได้เริ่ม
+            _save_retrain_status("failed_no_file", 0, 0)
             logging.error(f"[RETRAIN_CORE] Data file not found at {data_path}")
             return False, "Data file not found", 0, 0
 
@@ -360,16 +287,15 @@ def _retrain_model_core(data_path=TRADE_DATA_LOG_FILE, output_model_path=MODEL_P
 
         try:
             df['result'] = df['result'].astype(float)
-        except ValueError as e:
+        except ValueError as e_convert:
             duration_err = round(time.time() - start_time, 2)
             _save_retrain_status("failed_invalid_result_data", 0, duration_err)
             logging.error(
-                f"[RETRAIN_CORE] Error converting 'result' to float: {e}. Check data in {data_path}.",
+                f"[RETRAIN_CORE] Error converting 'result' to float: {e_convert}. Check data in {data_path}.",
                 exc_info=True
             )
             return False, "Invalid data in 'result' column", 0, duration_err
 
-        # --- ส่วนที่ 2: เตรียม X, y (ส่วน Robust X,y Preparation ที่เคยมี) ---
         processed_data = []
         for index, row in df.iterrows():
             features = parse_feature_string(row['features'])
@@ -400,9 +326,7 @@ def _retrain_model_core(data_path=TRADE_DATA_LOG_FILE, output_model_path=MODEL_P
             _save_retrain_status("failed_no_consistent_features", 0, duration_err)
             logging.error("[RETRAIN_CORE] No features with consistent length to train the model.")
             return False, "No features with consistent length", 0, duration_err
-        # --- สิ้นสุด Robust X,y Preparation ---
 
-        # --- ส่วนที่ 3: Train model ใหม่ ---
         model_new = xgb.XGBRegressor(n_estimators=100, max_depth=5, random_state=42)
         model_new.fit(np.array(X_final), np.array(y_final))
         joblib.dump(model_new, output_model_path)
@@ -414,23 +338,19 @@ def _retrain_model_core(data_path=TRADE_DATA_LOG_FILE, output_model_path=MODEL_P
             f"Duration: {duration}s. Saved to {output_model_path}"
         )
 
-        # --- ส่วนที่ 4: อัปเดต global model และ SHAP explainer ---
         if output_model_path == MODEL_PATH:
-            global model  # ใช้ global model ที่ประกาศไว้นอกฟังก์ชัน
+            global model  # model is assigned here
             model = model_new
             logging.info("[RETRAIN_CORE] Global model updated with newly retrained model.")
-            _initialize_shap_explainer()  # <--- เรียกตรงนี้
+            _initialize_shap_explainer()
 
         return True, "Retrain completed", len(X_final), duration
 
-    except Exception as e:  # <--- except block ที่สอดคล้องกับ try ด้านบน
-        # หาก start_time ถูกกำหนดนอก try block หลัก เรายังสามารถคำนวณ duration ได้
-        # หาก start_time อยู่ใน try และ error เกิดก่อนถึง start_time, duration อาจจะไม่ถูก define
-        # ดังนั้น ควรประกาศ duration_err เริ่มต้น หรือ ย้าย start_time ออกมา
+    except Exception as e_main:
         current_duration_on_error = round(time.time() - start_time, 2) if 'start_time' in locals() else 0
         _save_retrain_status("failed_exception", 0, current_duration_on_error)
-        logging.error(f"[RETRAIN_CORE] Exception during model retraining: {e}", exc_info=True)
-        return False, str(e), 0, current_duration_on_error
+        logging.error(f"[RETRAIN_CORE] Exception during model retraining: {e_main}", exc_info=True)
+        return False, str(e_main), 0, current_duration_on_error
 
 
 # === Data Logging Functions ===
@@ -439,7 +359,7 @@ def log_trade_data(command, features_str, result=None, ticket=None, file_path=TR
     log_entry = {
         "timestamp": datetime.now().isoformat(),
         "command": str(command),
-        "features": str(features_str),  # Store as string
+        "features": str(features_str),
         "result": result if result is not None else "",
         "ticket": ticket if ticket is not None else ""
     }
@@ -510,8 +430,8 @@ def predict_route():
         ai_score = predict_entry_logic(features_list)
 
         logging.info(f"[PREDICT_ROUTE] AI Score: {ai_score:.4f}")
-        log_trade_data("PREDICT_ENTRY", features_str, ai_score)  # Log original string and score
-        return jsonify(ai_score), 200  # ai_score is already float
+        log_trade_data("PREDICT_ENTRY", features_str, ai_score)
+        return jsonify(ai_score), 200
 
     except Exception as e:
         logging.error(f"[PREDICT_ROUTE] Exception occurred: {e}", exc_info=True)
@@ -533,10 +453,10 @@ def optimize_route():
             try:
                 v = float(v_str)
                 new_val = v * np.random.uniform(0.9, 1.1)
-                optimized[k] = round(new_val, 3)  # Python float
+                optimized[k] = round(new_val, 3)
             except ValueError:
                 logging.warning(f"[OPTIMIZER] Could not convert param {k} value '{v_str}' to float. Skipping.")
-                optimized[k] = v_str  # Keep original if not convertible
+                optimized[k] = v_str
 
         logging.info(f"[OPTIMIZER] Optimized result: {optimized}")
         return jsonify(optimized), 200
@@ -551,9 +471,7 @@ def optimize_route():
 
 @app.route('/monitor', methods=['GET'])
 def monitor_route():
-    # No license check for basic monitoring usually
     try:
-        # global model # F824: global model is unused (only read)
         model_status_str = "NOT_LOADED"
         if USE_FAKE_MODEL:
             model_status_str = "FAKE"
@@ -564,7 +482,7 @@ def monitor_route():
             "model_status": model_status_str,
             "model_path_configured": MODEL_PATH,
             "model_file_exists": os.path.exists(MODEL_PATH),
-            "latency_ms": int(np.random.randint(20, 80)),  # Python int
+            "latency_ms": int(np.random.randint(20, 80)),
             "enforce_license": ENFORCE_LICENSE,
             "timestamp": datetime.now().isoformat()
         }
@@ -615,11 +533,11 @@ def retrain_status_route():
 
 
 @app.route('/explain', methods=['POST'])
-def explain_shap_route():  # เปลี่ยนชื่อฟังก์ชันเล็กน้อยเพื่อไม่ให้ซ้ำกับของเดิม (ถ้ายังไม่ได้ลบ)
-    # global explainer # F824: global explainer is unused (only read)
+def explain_shap_route():
     if explainer is None:
-        # Service Unavailable
-        return jsonify({"error": "SHAP explainer not initialized. Model might not be loaded or compatible."}), 503
+        return jsonify(
+            {"error": "SHAP explainer not initialized. Model might not be loaded or compatible."}
+        ), 503
 
     try:
         payload = request.get_json()
@@ -629,14 +547,11 @@ def explain_shap_route():  # เปลี่ยนชื่อฟังก์ช
         feats_input = payload['features']
         if not isinstance(feats_input, list):
             return jsonify({"error": "'features' must be a list of numbers"}), 400
-        # SHAP TreeExplainer คาดหวัง input เป็น 2D array (n_samples, n_features)
-        # ในที่นี้เรารับ features สำหรับ 1 instance
         try:
             feats = np.array(feats_input, dtype=np.float32).reshape(1, -1)
         except ValueError as ve:
             return jsonify({"error": f"Invalid feature format or type: {ve}"}), 400
 
-        # ตรวจสอบจำนวน features ถ้า model มี attribute นี้ (XGBoost model มักจะมี n_features_in_)
         if hasattr(model, 'n_features_in_') and feats.shape[1] != model.n_features_in_:
             error_msg = (
                 f"Feature mismatch. Expected {model.n_features_in_} features, "
@@ -644,31 +559,22 @@ def explain_shap_route():  # เปลี่ยนชื่อฟังก์ช
             )
             return jsonify({"error": error_msg}), 400
 
-        # คำนวณ SHAP values
-        # สำหรับ XGBoost regressor (single output), explainer.shap_values(feats) จะคืน NumPy array shape (1, n_features)
-        shap_values_for_instance = explainer.shap_values(feats)  # ผลลัพธ์ควรเป็น (1, n_features)
+        shap_values_for_instance = explainer.shap_values(feats)
 
-        # เราต้องการ SHAP values สำหรับ instance เดียว (คือแถวแรก) และแปลงเป็น list
-        # และ base_value (หรือ expected_value)
         if isinstance(shap_values_for_instance, list):
-            # กรณี multi-output/multi-class (จากที่คุณโน้ตไว้ว่า regression ใช้ index [0])
-            # แต่สำหรับ single output regression จาก TreeExplainer มักจะไม่ใช่ list
-            # อย่างไรก็ตาม เพื่อให้ครอบคลุม:
             shap_values_to_send = shap_values_for_instance[0].tolist()
-            # expected_value สำหรับ multi-class อาจเป็น array, สำหรับ regression เป็น float
             base_val = explainer.expected_value[0] \
                 if isinstance(explainer.expected_value, np.ndarray) else explainer.expected_value
         elif isinstance(shap_values_for_instance, np.ndarray) and shap_values_for_instance.ndim == 2:
-            shap_values_to_send = shap_values_for_instance[0].tolist()  # เอาแถวแรก (instance เดียว)
-            base_val = explainer.expected_value  # สำหรับ regression มักเป็น float เดียว
+            shap_values_to_send = shap_values_for_instance[0].tolist()
+            base_val = explainer.expected_value
         else:
-            # กรณีที่ไม่คาดคิด
             logging.error(f"[EXPLAIN_SHAP] Unexpected shap_values format: {type(shap_values_for_instance)}")
             return jsonify({"error": "Unexpected SHAP values format from explainer."}), 500
 
         return jsonify({
             "shap_values": shap_values_to_send,
-            "base_value": float(base_val)  # explainer.expected_value มักจะเป็น float สำหรับ regression
+            "base_value": float(base_val)
         })
 
     except Exception as e:
@@ -685,10 +591,7 @@ def summary_route():
             return jsonify({"error": f"{TRADE_DATA_LOG_FILE} not found. No data to summarize."}), 404
 
         df = pd.read_csv(TRADE_DATA_LOG_FILE)
-        # Filter for rows where 'result' is not NaN and not an empty string
         df = df[df['result'].notna() & (df['result'] != "")]
-
-        # Attempt to convert 'result' to float, coercing errors to NaN, then drop NaN
         df['result'] = pd.to_numeric(df['result'], errors='coerce')
         df.dropna(subset=['result'], inplace=True)
 
@@ -700,7 +603,6 @@ def summary_route():
         std_dev_result = float(round(df['result'].std(), 4)) if not df['result'].empty else 0.0
         max_win = float(round(df['result'].max(), 4)) if not df['result'].empty else 0.0
         max_loss = float(round(df['result'].min(), 4)) if not df['result'].empty else 0.0
-        # Ensure total_trades is not zero before division
         winrate = float(round((df['result'] > 0).sum() / total_trades * 100, 2)) if total_trades > 0 else 0.0
 
         stats = {
@@ -722,14 +624,14 @@ def summary_route():
 
 def _generate_plot_base64(plot_function, *args, **kwargs):
     """Helper to generate a plot and return its base64 encoded string."""
-    fig, ax = plt.subplots(figsize=(10, 5))  # Standardized figure size
-    plot_function(ax, *args, **kwargs)  # Call the specific plot drawing function
+    fig, ax = plt.subplots(figsize=(10, 5))
+    plot_function(ax, *args, **kwargs)
 
     buf = io.BytesIO()
     plt.savefig(buf, format="png", bbox_inches='tight')
     buf.seek(0)
     img64 = base64.b64encode(buf.read()).decode("utf-8")
-    plt.close(fig)  # Close the figure to free memory
+    plt.close(fig)
     return img64
 
 
@@ -793,14 +695,12 @@ def visualize_summary_route():
 @app.route('/trends')
 def trends_route():
     kw = request.args.get('kw', 'general_topic')
-    # Placeholder: In a real app, query Google Trends API or similar
     return jsonify(keyword=kw, trend_value=round(np.random.uniform(30, 90), 1), source="Placeholder Trends API"), 200
 
 
 @app.route('/social')
 def social_route():
     src = request.args.get('src', 'twitter')
-    # Placeholder: In a real app, query Twitter/Reddit API and perform sentiment analysis
     return jsonify(
         source_platform=src,
         sentiment_score=round(np.random.uniform(-0.8, 0.8), 2),
@@ -811,7 +711,6 @@ def social_route():
 @app.route('/macro')
 def macro_route():
     name = request.args.get('name', 'PMI')
-    # Placeholder: In a real app, query a financial data API
     return jsonify(
         indicator_name=name,
         value=round(np.random.uniform(45, 55), 1),
@@ -822,7 +721,6 @@ def macro_route():
 @app.route('/orderbook')
 def orderbook_route():
     symbol = request.args.get('symbol', 'BTCUSD')
-    # Placeholder: In a real app, connect to exchange API
     return jsonify(
         trading_symbol=symbol,
         imbalance_ratio=round(np.random.uniform(-0.5, 0.5), 3),
@@ -834,7 +732,6 @@ def orderbook_route():
 def onchain_route():
     metric = request.args.get('metric', 'active_addresses')
     sym = request.args.get('symbol', 'ETH')
-    # Placeholder: In a real app, query on-chain data provider
     return jsonify(
         crypto_symbol=sym,
         onchain_metric=metric,
@@ -846,7 +743,6 @@ def onchain_route():
 @app.route("/cot", methods=["GET"])
 def cot_route():
     logging.info("[COT] COT Data requested")
-    # Placeholder for Commitment of Traders data
     data = {"asset": "Gold", "net_long_commercials": round(np.random.uniform(50, 85), 2), "source": "Placeholder COT"}
     return jsonify(data), 200
 
@@ -854,7 +750,6 @@ def cot_route():
 @app.route("/openinterest", methods=["GET"])
 def openinterest_route():
     logging.info("[OI] Open Interest requested")
-    # Placeholder for Open Interest
     oi_value = int(np.random.randint(50000, 200000))
     return jsonify({"symbol": "XAUUSD_Futures", "open_interest": oi_value, "source": "Placeholder OI"}), 200
 
@@ -862,7 +757,6 @@ def openinterest_route():
 @app.route("/news", methods=["GET"])
 def news_route():
     logging.info("[NEWS] News requested")
-    # Placeholder for News Impact
     news_data = {
         "event_name": "FOMC Meeting Minutes",
         "impact_level": "high" if np.random.rand() > 0.5 else "medium",
@@ -876,7 +770,6 @@ def news_route():
 @app.route("/correlation", methods=["GET"])
 def correlation_route():
     logging.info("[CORRELATION] Correlation data requested")
-    # Placeholder for Correlation Data
     correlation_data = {
         "target_asset": "XAUUSD",
         "correlations": {
@@ -893,7 +786,12 @@ def correlation_route():
 def vwap_route():
     symbol = request.args.get('symbol', 'XAUUSD')
     logging.info(f"[VWAP] VWAP requested for {symbol}")
-    data = {"symbol": symbol, "vwap": round(np.random.uniform(1900, 2100), 2), "timeframe": "1H", "source": "Placeholder VWAP"}
+    data = {
+        "symbol": symbol,
+        "vwap": round(np.random.uniform(1900, 2100), 2),
+        "timeframe": "1H",
+        "source": "Placeholder VWAP"
+    }
     return jsonify(data), 200
 
 
@@ -930,18 +828,15 @@ def harmonics_route():
 
 
 # === Retraining and Model Management Routes ===
-@app.route('/retrain', methods=['GET'])  # Can be POST if parameters are sent, GET for simple trigger
+@app.route('/retrain', methods=['GET'])
 def retrain_route():
     if not validate_license(request):
         return jsonify({"error": "Invalid license"}), 403
     logging.info("[RETRAIN_ROUTE] Manual retrain triggered.")
 
-    # Run core logic in a thread to make the HTTP request return faster for manual triggers
-    # For scheduled tasks, it runs in the scheduler's thread already.
     def _run_and_log():
-        with app.app_context():  # Need app context if core logic uses Flask specific things (not much here)
+        with app.app_context():
             success, message, samples, duration = _retrain_model_core()
-            # Further logging or actions after retrain if needed
             if success:
                 logging.info(f"[RETRAIN_ROUTE_THREAD] Retrain successful via route: {message}")
             else:
@@ -962,7 +857,7 @@ def log_result_route():
     try:
         payload = request.get_json()
         ticket = payload.get("ticket")
-        result_val = payload.get("result")  # Renamed to avoid conflict with 'result' variable from list comprehension
+        result_val = payload.get("result")
 
         if ticket is None or result_val is None:
             return jsonify({"error": "Missing 'ticket' or 'result' in payload"}), 400
@@ -973,13 +868,7 @@ def log_result_route():
         except ValueError:
             return jsonify({"error": "Ticket must be an integer and result must be a float."}), 400
 
-        # This logic updates the last PREDICT_ENTRY without a ticket.
-        # It assumes that PREDICT_ENTRY is logged first, then its outcome (ticket, result) is logged later.
         if not os.path.exists(TRADE_DATA_LOG_FILE):
-            # If file doesn't exist, we can't update. Log as a new entry perhaps?
-            # Or, more simply, state that no prior entry exists to update.
-            # For now, let's ensure the file can be created by log_trade_data if needed,
-            # but updating requires a prior entry.
             log_trade_data("RESULT_LOGGED_NO_PRIOR_PREDICT", f"Ticket: {ticket}", result_val, ticket)
             return jsonify(
                 {"status": "logged_as_new", "message": "No prior predict entry to update, logged as new result."}
@@ -987,15 +876,12 @@ def log_result_route():
 
         df = pd.read_csv(TRADE_DATA_LOG_FILE)
         updated = False
-        # Iterate backwards to find the most recent PREDICT_ENTRY without a ticket
         for idx in range(len(df) - 1, -1, -1):
-            # Ensure 'ticket' column exists and handle potential float NaNs from CSV read
-            # Also ensure 'command' column exists
             if 'command' in df.columns and df.at[idx, "command"].upper() == "PREDICT_ENTRY":
                 current_ticket = df.at[idx, "ticket"] if 'ticket' in df.columns else np.nan
                 if pd.isna(current_ticket) or str(current_ticket).strip() == "":
                     df.loc[idx, "ticket"] = ticket
-                    df.loc[idx, "result"] = result_val  # Update result as well, might be P/L
+                    df.loc[idx, "result"] = result_val
                     updated = True
                     break
 
@@ -1004,7 +890,6 @@ def log_result_route():
             logging.info(f"[LOG_RESULT] Successfully updated trade log for ticket {ticket} with result {result_val}.")
             return jsonify({"status": "success", "message": f"Result for ticket {ticket} logged."}), 200
         else:
-            # If no suitable PREDICT_ENTRY was found to update, log this as a new "RESULT_ONLY" entry.
             log_trade_data("RESULT_LOGGED_ORPHANED", f"Ticket: {ticket}", result_val, ticket)
             logging.warning(
                 f"[LOG_RESULT] No matching PREDICT_ENTRY found to update for ticket {ticket}. "
@@ -1013,7 +898,7 @@ def log_result_route():
             return jsonify(
                 {"status": "not_found_or_already_logged",
                  "message": (
-                     "No unlogged PREDICT_ENTRY found to associate this result with, "
+                     "No unlogged PREDICT_ENTRY to associate this result with, "
                      "or it was already logged. Logged as new/orphaned."
                  )}
             ), 202
@@ -1025,10 +910,8 @@ def log_result_route():
 
 @app.route("/log_execution_failure", methods=["POST"])
 def log_execution_failure_route():
-    # No license for internal logging typically
     raw_data = request.get_data()
     try:
-        # Handle potential null terminators from MQL4/5
         cleaned_raw_data = raw_data.rstrip(b'\x00')
         json_str = cleaned_raw_data.decode('utf-8')
         payload = json.loads(json_str)
@@ -1041,7 +924,7 @@ def log_execution_failure_route():
             "timestamp": datetime.now().isoformat(),
             "error_type": "PayloadParseError",
             "details": str(e),
-            "raw_payload_sample": raw_data[:200].decode('ascii', errors='replace')  # Save a sample
+            "raw_payload_sample": raw_data[:200].decode('ascii', errors='replace')
         }
         log_generic_csv(EXECUTION_FAILURES_CSV, log_entry)
         return jsonify({"error": f"Invalid JSON or encoding: {e}", "raw_bytes_sample": list(raw_data[:64])}), 400
@@ -1050,15 +933,15 @@ def log_execution_failure_route():
     log_data = {"timestamp": ts}
     log_file_target = None
 
-    if "reason" in payload and "ticket" in payload:  # More specific for execution failures
+    if "reason" in payload and "ticket" in payload:
         log_file_target = EXECUTION_FAILURES_CSV
         log_data["ticket"] = payload.get("ticket", "")
         log_data["reason"] = payload.get("reason", "Unknown reason")
-        log_data["details"] = payload.get("details", "")  # Optional extra details
+        log_data["details"] = payload.get("details", "")
         logging.info(
             f"[LOG_EXEC_FAIL] Logging execution failure for ticket {log_data['ticket']}: {log_data['reason']}"
         )
-    elif "score" in payload and "method" in payload and "ticket" in payload:  # For exit decisions
+    elif "score" in payload and "method" in payload and "ticket" in payload:
         log_file_target = EXIT_DECISIONS_CSV
         log_data["ticket"] = payload.get("ticket", "")
         log_data["score"] = payload.get("score", 0.0)
@@ -1069,8 +952,10 @@ def log_execution_failure_route():
         )
     else:
         logging.warning(f"[LOG_EXEC_FAIL] Unknown payload structure for logging: {payload}")
-        # Log to a generic error log or a specific "malformed_payloads.csv"
-        log_generic_csv("logs/malformed_failure_logs.csv", {"timestamp": ts, "payload_received": json.dumps(payload)})
+        log_generic_csv(
+            "logs/malformed_failure_logs.csv",
+            {"timestamp": ts, "payload_received": json.dumps(payload)}
+        )
         return jsonify(
             {"error": "Unknown payload structure. Required fields: (ticket, reason) or (ticket, score, method).",
              "received_payload": payload}
@@ -1080,14 +965,11 @@ def log_execution_failure_route():
     return jsonify({"status": "ok", "message": "Log received."}), 200
 
 
-# This route seems redundant if /log_execution_failure handles exit decisions.
-# Kept for compatibility if MQL uses it directly, but logic is similar.
 @app.route("/log_exit_decision", methods=["POST"])
 def log_exit_decision_route_specific():
-    # This acts as a more specific endpoint, essentially a subset of /log_execution_failure
     raw_bytes = request.get_data()
     logging.info(f"[LOG_EXIT_DECISION_SPECIFIC] Raw bytes: {raw_bytes!r}")
-    s = ""  # Initialize s in case of decode error
+    s = ""
     try:
         s = raw_bytes.rstrip(b'\x00').decode('utf-8')
         payload = json.loads(s)
@@ -1111,7 +993,6 @@ def log_exit_decision_route_specific():
 
 @app.route("/log_fail_entry", methods=["POST"])
 def log_fail_entry_route():
-    # No license for internal logging
     try:
         payload = request.get_json()
         if not payload:
@@ -1120,7 +1001,7 @@ def log_fail_entry_route():
         log_data = {
             "timestamp": datetime.now().isoformat(),
             "score": payload.get("score", 0.0),
-            "features": str(payload.get("features", "")),  # Store as string
+            "features": str(payload.get("features", "")),
             "reason": payload.get("reason", "Unknown reason")
         }
         log_generic_csv(AI_FAIL_ENTRY_CSV, log_data)
@@ -1139,8 +1020,6 @@ def _generate_html_table_page(csv_path, page_title, error_message_not_found):
             raise FileNotFoundError(error_message_not_found)
 
         df = pd.read_csv(csv_path)
-        # Sanitize column names for HTML display if necessary (e.g., replace underscores)
-        # df.columns = [col.replace('_', ' ').title() for col in df.columns]
         html_table = df.to_html(classes="table table-striped table-hover", index=False, border=0, escape=True)
 
         return f"""
@@ -1175,7 +1054,7 @@ def fail_log_view_route():
     )
 
 
-@app.route("/exit_decision_log", methods=["GET"])  # New route for specific exit decision log
+@app.route("/exit_decision_log", methods=["GET"])
 def exit_decision_log_view_route():
     return _generate_html_table_page(EXIT_DECISIONS_CSV, "🚪 Exit Decision Log", "Exit decision log not found.")
 
@@ -1189,8 +1068,8 @@ def fail_entry_log_view_route():
 def _run_walking_forward_test_core(
     data_path=TRADE_DATA_LOG_FILE,
     output_path=WFT_RESULTS_CSV,
-    train_window=300,  # Number of samples
-    test_window=50  # Number of samples
+    train_window=300,
+    test_window=50
 ):
     try:
         logging.info("[WFT_CORE] 🔁 Starting Walking Forward Test")
@@ -1204,11 +1083,10 @@ def _run_walking_forward_test_core(
         df['result'] = pd.to_numeric(df['result'], errors='coerce')
         df.dropna(subset=['result'], inplace=True)
 
-        # Parse features and keep only valid ones along with their results
         parsed_data = []
         for index, row in df.iterrows():
             features = parse_feature_string(row['features'])
-            timestamp = pd.to_datetime(row['timestamp'], errors='coerce')  # Add timestamp parsing
+            timestamp = pd.to_datetime(row['timestamp'], errors='coerce')
             if features and pd.notna(timestamp):
                 parsed_data.append({'X': features, 'y': row['result'], 'timestamp': timestamp})
 
@@ -1216,7 +1094,6 @@ def _run_walking_forward_test_core(
             logging.error("[WFT_CORE] No valid feature/result pairs after parsing for WFT.")
             return {"status": "error", "message": "No valid feature/result data for WFT."}
 
-        # Ensure all feature lists have consistent length
         expected_len = len(parsed_data[0]['X'])
         df_wft_data = pd.DataFrame([d for d in parsed_data if len(d['X']) == expected_len])
 
@@ -1247,7 +1124,7 @@ def _run_walking_forward_test_core(
             test_start_idx = train_end_idx
             test_end_idx = test_start_idx + test_window
 
-            if test_end_idx > len(df_wft_data):  # Ensure test data does not exceed bounds
+            if test_end_idx > len(df_wft_data):
                 break
             train_set = df_wft_data.iloc[train_start_idx:train_end_idx]
             test_set = df_wft_data.iloc[test_start_idx:test_end_idx]
@@ -1259,22 +1136,14 @@ def _run_walking_forward_test_core(
             X_train = np.array(train_set['X'].tolist())
             y_train = np.array(train_set['y'].tolist())
             X_test = np.array(test_set['X'].tolist())
-            # y_test_actual = np.array(test_set['y'].tolist()) # Actual results for evaluation
 
-            # Use round for different random_state
             wft_model = xgb.XGBRegressor(n_estimators=50, max_depth=4, random_state=i)
             wft_model.fit(X_train, y_train)
-
-            # Predictions are the model's output, treat these as the "simulated trade results/scores"
-            # The 'result' column in trade_data.csv is the target for the regressor.
-            # If this target is already a P&L or performance metric, then 'preds' are predicted P&L/metric.
             preds = wft_model.predict(X_test)
 
             avg_pred_metric = np.mean(preds)
             std_pred_metric = np.std(preds)
-            # "Win rate" based on predicted metric being positive (if metric > 0 is "win")
             winrate_on_pred = np.mean(preds > 0) * 100 if len(preds) > 0 else 0
-            # Drawdown on the sequence of predicted metrics
             mdd_on_pred = np.min(np.cumsum(preds)) if len(preds) > 0 else 0
 
             round_result_data = {
@@ -1312,13 +1181,11 @@ def _run_walking_forward_test_core(
         return {"status": "error", "message": f"WFT failed: {str(e)}"}
 
 
-@app.route("/wft", methods=["GET"])  # Or POST if params
+@app.route("/wft", methods=["GET"])
 def wft_route():
     if not validate_license(request):
         return jsonify({"error": "Invalid license"}), 403
     logging.info("[WFT_ROUTE] WFT initiated via route.")
-    # Run WFT in a background thread
-    # Get params from request.args if needed, e.g., /wft?train_window=400
     train_win = request.args.get('train_window', 300, type=int)
     test_win = request.args.get('test_window', 50, type=int)
 
@@ -1326,13 +1193,13 @@ def wft_route():
         target=_run_walking_forward_test_core,
         args=(TRADE_DATA_LOG_FILE, WFT_RESULTS_CSV, train_win, test_win)
     )
-    thread.daemon = True  # Allow main program to exit even if threads are running
+    thread.daemon = True
     thread.start()
-    return jsonify(
-        {"status": "triggered",
-         "message": f"WFT process initiated in background with train_window={train_win}, test_window={test_win}. "
-                    "Check logs or WFT summary page."}
-    ), 202
+    msg = (
+        f"WFT process initiated in background with train_window={train_win}, "
+        f"test_window={test_win}. Check logs or WFT summary page."
+    )
+    return jsonify({"status": "triggered", "message": msg}), 202
 
 
 def _plot_wft_summary(ax, df_wft):
@@ -1378,7 +1245,6 @@ def wft_summary_route():
                 message="❌ WFT results file is empty or has incorrect columns."
             ), 200
 
-        # Ensure data types for plotting
         df_wft['round'] = pd.to_numeric(df_wft['round'], errors='coerce')
         df_wft['avg_predicted_metric'] = pd.to_numeric(df_wft['avg_predicted_metric'], errors='coerce')
         df_wft['winrate_on_predicted_metric_percent'] = pd.to_numeric(
@@ -1387,7 +1253,7 @@ def wft_summary_route():
         )
         df_wft.dropna(subset=['round', 'avg_predicted_metric', 'winrate_on_predicted_metric_percent'], inplace=True)
 
-        if len(df_wft) < 1:  # Need at least one point to plot meaningfully
+        if len(df_wft) < 1:
             return error_html_template.format(
                 color="orange",
                 message="⚠️ Not enough valid data in WFT results to generate chart."
@@ -1411,7 +1277,7 @@ def _train_model_from_best_wft_round(
     wft_results_path=WFT_RESULTS_CSV,
     trade_data_path=TRADE_DATA_LOG_FILE,
     output_model_path=BEST_MODEL_PATH,
-    optimize_metric='winrate_on_predicted_metric_percent'  # or 'avg_predicted_metric'
+    optimize_metric='winrate_on_predicted_metric_percent'
 ):
     try:
         if not os.path.exists(wft_results_path):
@@ -1421,13 +1287,10 @@ def _train_model_from_best_wft_round(
         if df_wft.empty or optimize_metric not in df_wft.columns:
             return False, f"WFT results empty or missing optimizing metric '{optimize_metric}'."
 
-        # Find the best round based on the chosen metric (higher is better)
         best_row = df_wft.loc[df_wft[optimize_metric].idxmax()]
-
         best_train_start_ts = pd.to_datetime(best_row['train_start_ts'])
         num_train_samples_in_best_round = int(best_row["samples_train"])
 
-        # Load all trade data
         df_all_trades = pd.read_csv(trade_data_path)
         df_all_trades = df_all_trades[df_all_trades['command'].str.upper() == "PREDICT_ENTRY"]
         df_all_trades['result'] = pd.to_numeric(df_all_trades['result'], errors='coerce')
@@ -1435,8 +1298,6 @@ def _train_model_from_best_wft_round(
         df_all_trades['timestamp'] = pd.to_datetime(df_all_trades['timestamp'])
         df_all_trades.sort_values('timestamp', inplace=True)
 
-        # Filter data that was used for training in the best WFT round
-        # This requires careful matching of timestamps and feature parsing as done in WFT
         training_data_for_best_model_list = []
         for index, row in df_all_trades.iterrows():
             if row['timestamp'] >= best_train_start_ts:
@@ -1444,7 +1305,7 @@ def _train_model_from_best_wft_round(
                 if features:
                     training_data_for_best_model_list.append({'X': features, 'y': row['result']})
                 if len(training_data_for_best_model_list) >= num_train_samples_in_best_round:
-                    break  # Collected enough samples corresponding to the best WFT training set
+                    break
 
         if len(training_data_for_best_model_list) < num_train_samples_in_best_round:
             msg = (
@@ -1459,7 +1320,6 @@ def _train_model_from_best_wft_round(
         X_train_best = np.array(df_train_best['X'].tolist())
         y_train_best = np.array(df_train_best['y'].tolist())
 
-        # Train the final model using these parameters
         final_best_model = xgb.XGBRegressor(n_estimators=50, max_depth=4, random_state=int(best_row['round']))
         final_best_model.fit(X_train_best, y_train_best)
         joblib.dump(final_best_model, output_model_path)
@@ -1479,7 +1339,7 @@ def _train_model_from_best_wft_round(
 def activate_best_wft_model_route():
     if not validate_license(request):
         return jsonify({"error": "Invalid license"}), 403
-    # global model # This global is assigned to by load_model, so it's fine.
+    # global model # model is assigned by load_model
     try:
         success, message = _train_model_from_best_wft_round()
         if not success:
@@ -1487,8 +1347,7 @@ def activate_best_wft_model_route():
                 {"status": "error", "message": f"Failed to train best model from WFT: {message}"}
             ), 500
 
-        # Load the newly trained best model as the active model
-        if load_model(path=BEST_MODEL_PATH):  # load_model updates global 'model'
+        if load_model(path=BEST_MODEL_PATH):
             return jsonify({"status": "success", "message": f"Best model from WFT activated. {message}"}), 200
         else:
             return jsonify(
@@ -1505,8 +1364,7 @@ def _create_exit_report_placeholder(output_dir="."):
     """Creates a placeholder trading exit report (text file)."""
     try:
         filename_base = f"TradingReport_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        # Placeholder text file for now
-        txt_filename = os.path.join(output_dir, f"{filename_base}.txt")  # Changed to .txt for placeholder
+        txt_filename = os.path.join(output_dir, f"{filename_base}.txt")
 
         report_content = f"""
         Trading Exit Report
@@ -1535,7 +1393,7 @@ def _create_exit_report_placeholder(output_dir="."):
             f.write(report_content)
         logging.info(f"[REPORT_GEN] ✅ Placeholder report saved as {txt_filename}")
         return txt_filename
-    except Exception as e:  # F841: local variable 'e' is assigned to but never used
+    except Exception as e:
         logging.error(f"[REPORT_GEN] ❌ Error generating placeholder report: {e}", exc_info=True)
         return None
 
@@ -1545,9 +1403,7 @@ def download_report_route():
     if not validate_license(request):
         return jsonify({"error": "Invalid license"}), 403
     try:
-        # Reports are currently text files, saved in the script's CWD
-        reports_dir = os.path.abspath(".")  # Assuming reports are in the root for now
-        # Look for .txt reports, as PDF is placeholder
+        reports_dir = os.path.abspath(".")
         files = [f for f in os.listdir(reports_dir) if f.startswith("TradingReport_") and f.endswith(".txt")]
         if not files:
             return (
@@ -1568,7 +1424,6 @@ def get_preset_route(name):
     if not validate_license(request):
         return jsonify({"error": "Invalid license"}), 403
     try:
-        # Sanitize name to prevent directory traversal
         safe_name = "".join(c for c in name if c.isalnum() or c in ('_', '-'))
         if not safe_name:
             return jsonify({"error": "Invalid preset name"}), 400
@@ -1590,13 +1445,8 @@ def get_preset_route(name):
 
 @app.route('/drift', methods=['POST'])
 def drift():
-    # global baseline_mean  # F824: global baseline_mean is unused (only read)
     try:
         if baseline_mean is None:
-            # ควรจะโหลด baseline_mean จากไฟล์ที่บันทึกไว้ตอน train model
-            # หรือคำนวณเมื่อเริ่ม app ถ้ายังไม่ได้ทำ
-            # ตัวอย่าง: baseline_mean = np.load('models/baseline_feature_mean.npy')
-            # หรือถ้าไม่มีจริงๆ อาจจะต้อง return error หรือค่า default
             logging.error("[DRIFT] baseline_mean is not initialized.")
             return "Error: Baseline mean not initialized on server.", 500, {'Content-Type': 'text/plain'}
 
@@ -1605,14 +1455,10 @@ def drift():
             return "Error: Missing 'features' in JSON payload.", 400, {'Content-Type': 'text/plain'}
 
         feats_input = payload['features']
-
-        # ตรวจสอบว่า feats_input เป็น list ของตัวเลขหรือไม่
         if not isinstance(feats_input, list) or not all(isinstance(x, (int, float)) for x in feats_input):
             return "Error: 'features' must be a list of numbers.", 400, {'Content-Type': 'text/plain'}
 
         feats = np.array(feats_input, dtype=float)
-
-        # ตรวจสอบว่าจำนวน features ตรงกับ baseline_mean หรือไม่
         if feats.shape[0] != baseline_mean.shape[0]:
             logging.warning(f"[DRIFT] Feature length mismatch. Input: {feats.shape[0]}, Baseline: {baseline_mean.shape[0]}")
             return (
@@ -1621,7 +1467,6 @@ def drift():
                 {'Content-Type': 'text/plain'}
             )
 
-        # Handle division by zero if len(feats) is 0 (though previous checks should prevent this)
         if len(feats) == 0:
             return "Error: Features array cannot be empty.", 400, {'Content-Type': 'text/plain'}
 
@@ -1636,7 +1481,6 @@ def drift():
 
 @app.route('/rl/predict', methods=['POST'])
 def rl_predict():
-    # global rl_model  # F824: global rl_model is unused (only read)
     if rl_model is None:
         return jsonify(error="RL model not loaded"), 500
     try:
@@ -1645,11 +1489,10 @@ def rl_predict():
             return jsonify(error="Missing 'features' in payload"), 400
 
         data = payload["features"]
-        # ตรวจสอบว่า data เป็น list และมีจำนวน feature_dim
         if not isinstance(data, list) or len(data) != feature_dim:
             return jsonify(error=f"Features must be a list of {feature_dim} numbers"), 400
 
-        obs = np.array(data, dtype=np.float32).reshape(1, -1)  # PPO คาดหวัง obs ที่มี batch dimension
+        obs = np.array(data, dtype=np.float32).reshape(1, -1)
         action, _ = rl_model.predict(obs, deterministic=True)
         return jsonify(action=int(action))
     except Exception as e:
@@ -1659,19 +1502,15 @@ def rl_predict():
 
 @app.route('/rl/store', methods=['POST'])
 def rl_store():
-    global rl_buffer, buffer_lock  # rl_buffer is modified
+    global rl_buffer, buffer_lock  # These are modified/used with modification intent
     try:
         payload = request.get_json()
-        # ตรวจสอบ payload ที่จำเป็น: {"obs": [...], "action":0, "reward":0.5, "next_obs":[...], "done":False}
         required_keys = ["obs", "action", "reward", "next_obs", "done"]
         if not payload or not all(key in payload for key in required_keys):
             return jsonify(error=f"Missing one or more required keys: {required_keys}"), 400
 
-        # อาจจะมีการ validate data types เพิ่มเติมที่นี่
-
         with buffer_lock:
             rl_buffer.append(payload)
-        # logging.info(f"[RL_STORE] Stored transition. Buffer size: {len(rl_buffer)}") # Optional: log buffer size
         return jsonify(status="stored", buffer_size=len(rl_buffer))
     except Exception as e:
         logging.error(f"[RL_STORE] Error: {e}", exc_info=True)
@@ -1680,12 +1519,9 @@ def rl_store():
 
 @app.route('/rl/update', methods=['POST'])
 def rl_update():
-    global rl_model, rl_buffer, buffer_lock, rl_model_path  # rl_model, rl_buffer are modified
+    global rl_model, rl_buffer, buffer_lock  # rl_model_path removed as it's only read
     if rl_model is None:
         return jsonify(error="RL model not loaded"), 500
-
-    # ควรมีการทำ RL update ใน background thread เพื่อไม่ให้ request ค้างนาน
-    # แต่สำหรับตัวอย่างนี้ จะทำแบบ synchronous ก่อน
 
     transitions_to_learn = []
     with buffer_lock:
@@ -1695,119 +1531,90 @@ def rl_update():
         rl_buffer.clear()
 
     logging.info(f"[RL_UPDATE] Starting RL model update with {len(transitions_to_learn)} transitions.")
-
-    # --- ส่วนนี้คือจุดที่ซับซ้อน และอาจจะต้องปรับปรุงให้เหมาะสมกับ PPO ---
-    # PPO เป็น on-policy algorithm ปกติจะเรียนรู้จาก rollouts ที่สร้างขึ้นใหม่โดย policy ปัจจุบัน
-    # การเรียนรู้จาก buffer ของ (s, a, r, s', d) ที่เก็บไว้ (offline data) สำหรับ PPO ไม่ตรงไปตรงมาเท่า off-policy algorithms
-    # `rl_model.learn(total_timesteps=X)` จะสั่งให้โมเดล run environment ของมันเอง X timesteps
-    # ไม่ได้ใช้ข้อมูล obs, acts, rews จาก buffer โดยตรงใน PPO.learn() แบบนี้
-
-    # **วิธีที่เป็นไปได้ (แต่ซับซ้อนกว่า):**
-    # 1. สร้าง Custom Replay Buffer หรือ Dataset จาก `transitions_to_learn`.
-    # 2. ปรับ PPO algorithm หรือใช้ algorithm ที่เหมาะกับ offline learning มากกว่า ถ้าต้องการเรียนจาก buffer แบบนี้จริงๆ
-    # 3. หรือ `PIMMAEnv` จะต้องถูกออกแบบให้ `step()` สามารถรับข้อมูลจาก `transitions_to_learn` แทนการ simulate เอง
-    #    (เช่น MQL ส่งข้อมูลมาให้ PIMMAEnv ใช้ใน step ถัดไป)
-
-    # **สำหรับตอนนี้ โค้ดเดิมของคุณคือ `rl_model.learn(total_timesteps=len(data))`**
-    # นี่จะหมายถึงการให้ PPO model ปัจจุบัน run `PIMMAEnv` เป็นจำนวน `len(transitions_to_learn)` steps
-    # ซึ่ง `PIMMAEnv` ที่เราสร้างมี dummy `step` function.
-    # ถ้าต้องการให้มัน "เรียนรู้" อะไรบางอย่างจริงๆ `PIMMAEnv` จะต้องมีความหมายมากกว่านี้
-    # หรือคุณอาจจะหมายถึงการทำ pre-training ด้วย behavioral cloning หรือเทคนิคอื่นจาก buffer นี้ก่อน
-    # แล้วค่อย fine-tune ด้วย PPO.learn() แบบ online.
-
-    # เพื่อให้โค้ดทำงานตามที่คุณให้มา (แม้ว่าอาจจะต้องปรับปรุง logic การ train ของ RL ในอนาคต):
     try:
-        # ตรวจสอบว่า env ของ rl_model ถูกตั้งค่าแล้ว
         if rl_model.get_env() is None:
             logging.warning("[RL_UPDATE] RL model environment not set. Setting a default one.")
             temp_env = PIMMAEnv(feature_dim)
             rl_model.set_env(DummyVecEnv([lambda: temp_env]))
 
-        # จำนวน timesteps ที่จะ train ในครั้งนี้
-        # การ train PPO ด้วยจำนวน timesteps น้อยๆ ซ้ำๆ อาจจะไม่ค่อยมีประสิทธิภาพเท่า train ด้วย batch ใหญ่
-        # ค่านี้ควรสัมพันธ์กับ n_steps ที่ตั้งไว้ตอนสร้าง PPO model
-        # เช่น ถ้า n_steps=128, total_timesteps ควรเป็น مضاعفات ของ 128
-        # แต่ len(transitions_to_learn) คือจำนวน transitions ที่เก็บมา
-        # นี่เป็นจุดที่การออกแบบการ train ของคุณเข้ามาเกี่ยวข้อง
-        num_timesteps_to_learn = max(128, len(transitions_to_learn))  # อย่างน้อย train 1 rollout (n_steps) หรือมากกว่า
-
+        num_timesteps_to_learn = max(128, len(transitions_to_learn))
         logging.info(f"[RL_UPDATE] Calling rl_model.learn() with total_timesteps={num_timesteps_to_learn}")
-        # reset_num_timesteps=False เพื่อให้นับต่อ
         rl_model.learn(total_timesteps=num_timesteps_to_learn, reset_num_timesteps=False)
-        rl_model.save(rl_model_path)
+        rl_model.save(rl_model_path)  # rl_model_path is read from global scope here
         logging.info(f"[RL_UPDATE] RL model updated and saved to {rl_model_path}")
         return jsonify(status="rl_model_updated", transitions_processed=len(transitions_to_learn))
     except Exception as e:
         logging.error(f"[RL_UPDATE] Error during RL model update: {e}", exc_info=True)
-        # คืน transitions กลับเข้า buffer ถ้าการ train ล้มเหลว (อาจจะซับซ้อน ควรพิจารณา)
-        # with buffer_lock:
-        #     rl_buffer.extend(transitions_to_learn) # Caution: could lead to repeated failures
         return jsonify(error=f"Failed to update RL model: {str(e)}"), 500
 
 
 # --- Dashboard ---
 @app.route("/dashboard")
 def dashboard_route():
-    # Basic dashboard, no license check needed for view generally
-    return """
+    # Adjusted button text for E501
+    button_style = "class=\"list-group-item list-group-item-action task-btn btn btn-light\""
+    action_button_style_primary = "class=\"list-group-item list-group-item-action task-btn btn btn-primary\""
+    action_button_style_info = "class=\"list-group-item list-group-item-action task-btn btn btn-info\""
+    action_button_style_success = "class=\"list-group-item list-group-item-action task-btn btn btn-success\""
+    warning_button_style = "class=\"list-group-item list-group-item-action task-btn btn btn-warning\""
+
+    html_content = f"""
     <html>
     <head>
         <title>📊 AI Trading Dashboard</title>
         <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
         <style>
-            body { padding: 20px; font-family: Arial, sans-serif; }
-            .task-btn { margin-bottom: 10px; min-width: 250px; }
-            .container { max-width: 800px; }
-            h1, h2 { margin-bottom: 20px; }
-            .list-group-item a { text-decoration: none; }
-            .list-group-item button { width: 100%; text-align: left; }
+            body {{ padding: 20px; font-family: Arial, sans-serif; }}
+            .task-btn {{ margin-bottom: 10px; min-width: 250px; }}
+            .container {{ max-width: 800px; }}
+            h1, h2 {{ margin-bottom: 20px; }}
+            .list-group-item a {{ text-decoration: none; }}
+            .list-group-item button {{ width: 100%; text-align: left; }}
         </style>
         <script>
-        async function runTask(path, btnId, method = 'GET', body = null) {
+        async function runTask(path, btnId, method = 'GET', body = null) {{
             const btn = document.getElementById(btnId);
             const originalText = btn.innerText;
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Processing...';
             let message = '';
-            try {
-                const options = { method: method };
-                if (method === 'POST' && body) {
-                    options.headers = {'Content-Type': 'application/json'};
+            try {{
+                const options = {{ method: method }};
+                if (method === 'POST' && body) {{
+                    options.headers = {{'Content-Type': 'application/json'}};
                     options.body = JSON.stringify(body);
-                }
+                }}
                 const res = await fetch(path, options);
-                const data = await res.json(); // Expect JSON response
-                if (res.ok) {
-                    message = `✅ Success: ${data.message || JSON.stringify(data)}`;
-                } else {
-                    message = `❌ Error ${res.status}: ${data.error || JSON.stringify(data)}`;
-                }
-            } catch(e) {
-                message = `❌ Network/Script Error: ${e}`;
-            }
-            alert(message); // Simple feedback
+                const data = await res.json();
+                if (res.ok) {{
+                    message = `✅ Success: ${{data.message || JSON.stringify(data)}}`;
+                }} else {{
+                    message = `❌ Error ${{res.status}}: ${{data.error || JSON.stringify(data)}}`;
+                }}
+            }} catch(e) {{
+                message = `❌ Network/Script Error: ${{e}}`;
+            }}
+            alert(message);
             btn.disabled = false;
             btn.innerText = originalText;
-        }
-
-        function viewPage(path) { window.location.href = path; }
+        }}
+        function viewPage(path) {{ window.location.href = path; }}
         </script>
     </head>
     <body>
         <div class="container">
             <h1>📊 AI Trading Dashboard</h1>
-
             <h2>🚀 Actions</h2>
             <div class="list-group mb-4">
-                <button id="retrain-btn" class="list-group-item list-group-item-action task-btn btn btn-primary"
+                <button id="retrain-btn" {action_button_style_primary}
                         onclick="runTask('/retrain','retrain-btn')">
                     🔁 Trigger Model Retrain
                 </button>
-                <button id="wft-btn" class="list-group-item list-group-item-action task-btn btn btn-info"
+                <button id="wft-btn" {action_button_style_info}
                         onclick="runTask('/wft','wft-btn')">
                     📈 Trigger Walking Forward Test (WFT)
                 </button>
-                <button id="activate-wft-btn" class="list-group-item list-group-item-action task-btn btn btn-success"
+                <button id="activate-wft-btn" {action_button_style_success}
                         onclick="runTask('/activate_best_wft_model','activate-wft-btn')">
                     🌟 Activate Best Model from WFT
                 </button>
@@ -1815,31 +1622,32 @@ def dashboard_route():
 
             <h2>📈 Status & Visualizations</h2>
             <div class="list-group mb-4">
-                <button class="list-group-item list-group-item-action task-btn btn btn-light" onclick="viewPage('/retrain_status')">🧠 View Retrain Status</button>
-                <button class="list-group-item list-group-item-action task-btn btn btn-light" onclick="viewPage('/summary')">💹 View Trade Summary (JSON)</button>
-                <button class="list-group-item list-group-item-action task-btn btn btn-light" onclick="viewPage('/visualize_summary')">📊 View Profit Summary Chart</button>
-                <button class="list-group-item list-group-item-action task-btn btn btn-light" onclick="viewPage('/wft_summary')">📈 View WFT Summary Chart</button>
-                <button class="list-group-item list-group-item-action task-btn btn btn-light" onclick="runTask('/monitor','monitor-btn-silent')">🩺 Check API Monitor (Alert)</button>
-                <button class="list-group-item list-group-item-action task-btn btn btn-light" onclick="viewPage('/explain')">💡 View Model Feature Importance (JSON)</button>
+                <button {button_style} onclick="viewPage('/retrain_status')">🧠 View Retrain Status</button>
+                <button {button_style} onclick="viewPage('/summary')">💹 View Trade Summary (JSON)</button>
+                <button {button_style} onclick="viewPage('/visualize_summary')">📊 View Profit Summary Chart</button>
+                <button {button_style} onclick="viewPage('/wft_summary')">📈 View WFT Summary Chart</button>
+                <button {button_style} onclick="runTask('/monitor','monitor-btn-silent')">🩺 API Monitor (Alert)</button>
+                <button {button_style} onclick="viewPage('/explain')">💡 Model Feature Importance (JSON)</button>
             </div>
 
             <h2>📄 Logs & Reports</h2>
             <div class="list-group mb-4">
-                <button class="list-group-item list-group-item-action task-btn btn btn-light" onclick="viewPage('/download_csv')">⬇ Download Trade Data CSV</button>
-                <button class="list-group-item list-group-item-action task-btn btn btn-light" onclick="viewPage('/download_report')">📋 Download Latest Report</button>
-                <button class="list-group-item list-group-item-action task-btn btn btn-warning" onclick="viewPage('/fail_log')">❌ View Execution Failure Log</button>
-                <button class="list-group-item list-group-item-action task-btn btn btn-warning" onclick="viewPage('/exit_decision_log')">🚪 View Exit Decision Log</button>
-                <button class="list-group-item list-group-item-action task-btn btn btn-warning" onclick="viewPage('/fail_entry_log')">🚫 View AI Entry Fail Log</button>
+                <button {button_style} onclick="viewPage('/download_csv')">⬇ Download Trade Data CSV</button>
+                <button {button_style} onclick="viewPage('/download_report')">📋 Download Latest Report</button>
+                <button {warning_button_style} onclick="viewPage('/fail_log')">❌ View Execution Failure Log</button>
+                <button {warning_button_style} onclick="viewPage('/exit_decision_log')">🚪 View Exit Decision Log</button>
+                <button {warning_button_style} onclick="viewPage('/fail_entry_log')">🚫 View AI Entry Fail Log</button>
             </div>
         </div>
     </body></html>"""
+    return html_content
 
 
 # === Background Scheduler ===
 # --- Scheduled Tasks ---
 def scheduled_model_retrain_task():
     logging.info("[SCHEDULER] Initiating scheduled model retrain...")
-    with app.app_context():  # Ensure Flask app context is available if needed by core logic
+    with app.app_context():
         success, message, samples, duration = _retrain_model_core()
     if success:
         logging.info(
@@ -1853,7 +1661,7 @@ def scheduled_model_retrain_task():
 def scheduled_report_generation_task():
     logging.info("[SCHEDULER] Initiating scheduled report generation...")
     with app.app_context():
-        report_file = _create_exit_report_placeholder()  # Using placeholder
+        report_file = _create_exit_report_placeholder()
     if report_file:
         logging.info(f"[SCHEDULER] ✅ Scheduled report generated: {report_file}")
     else:
@@ -1862,21 +1670,12 @@ def scheduled_report_generation_task():
 
 # --- Scheduler Runner ---
 def run_scheduler():
-    # Define schedules
-    # Example: Retrain every day at 1:00 AM server time
     schedule.every().day.at("01:00").do(scheduled_model_retrain_task)
-    # Example: Generate report every day at 00:00 server time
     schedule.every().day.at("00:00").do(scheduled_report_generation_task)
-
-    # Example: Run WFT weekly on Sunday at 03:00 AM
-    # schedule.every().sunday.at("03:00").do(
-    #     lambda: _run_walking_forward_test_core(TRADE_DATA_LOG_FILE, WFT_RESULTS_CSV) # Use lambda for args
-    # )
-
     logging.info("[SCHEDULER] Scheduler started with defined tasks.")
     while True:
         schedule.run_pending()
-        time.sleep(60)  # Check every minute
+        time.sleep(60)
 
 
 # === Main Execution ===
@@ -1884,9 +1683,7 @@ if __name__ == '__main__':
     logging.info("[SERVER_INIT] Flask API service is starting...")
     print("[SERVER_INIT] Flask API service is starting...")
 
-    # Start the background scheduler thread (ONLY ONCE)
-    # Ensure this block does not run again if Flask's reloader is active (use_reloader=False handles this)
-    if not (app.debug and os.environ.get('WERKZEUG_RUN_MAIN') == 'true'):  # Check if not in reloader's subprocess
+    if not (app.debug and os.environ.get('WERKZEUG_RUN_MAIN') == 'true'):
         scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
         scheduler_thread.start()
         logging.info("[SERVER_INIT] Background scheduler thread started.")
@@ -1895,10 +1692,7 @@ if __name__ == '__main__':
         logging.info("[SERVER_INIT] Scheduler thread already started by main Werkzeug process or skipped in reloader.")
         print("[SERVER_INIT] Scheduler thread already started by main Werkzeug process or skipped in reloader.")
 
-    # Log server start
-    print("f[SERVER_INIT] Flask API is attempting to run on http://127.0.0.1:5000")  # F541
-    logging.info("f[SERVER_INIT] Flask API initialized, attempting to run on http://127.0.0.1:5000") # F541
+    print("Flask API is attempting to run on http://127.0.0.1:5000")  # Corrected F541
+    logging.info("Flask API initialized, attempting to run on http://127.0.0.1:5000")  # Corrected F541
 
-    # Run Flask app
-    # use_reloader=False is important if you manage threads yourself to avoid them starting twice
     app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
