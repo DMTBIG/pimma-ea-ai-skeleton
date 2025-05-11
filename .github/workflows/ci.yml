@@ -57,7 +57,7 @@ jobs:
     name: Validate MQL5 Includes (via Xvfb + Wine)
     runs-on: ubuntu-latest
     needs: lint-python
-    continue-on-error: true         
+    continue-on-error: true      
     steps:
       - uses: actions/checkout@v3
 
