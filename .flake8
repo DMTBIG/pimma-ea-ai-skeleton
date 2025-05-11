@@ -8,12 +8,13 @@ extend-ignore =
 
 per-file-ignores =
     main.py:
-      F824,  
-      F841,  
-      E261,  
-      E501,  
-      E302,  
-      W292  
+        F401,  
+        F824,  
+        F841,  
+        E261,  
+        E501,  
+        E302,  
+        W292   
 
 exclude =
     .git,
