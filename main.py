@@ -1,6 +1,4 @@
-from flask import Flask, jsonify, send_file
-- import traceback
-- import requests
+from flask import Flask,request, jsonify, send_file
 import os
 import logging
 import json
@@ -16,6 +14,9 @@ import sys
 import subprocess
 import io
 import base64
+from gym import Env
+from gym import spaces
+from stable_baselines3 import PPO
 
 # Standard Library Imports first, then third-party, then local
 # (Order is generally good, just consolidated)
@@ -60,9 +61,8 @@ except ImportError:
     import stable_baselines3
     print("gym, stable-baselines3, and shimmy installed and imported successfully.")
     
-- from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv # อาจจำเป็นถ้า PIMMAEnv ไม่ได้เป็น VecEnv โดยตรง
-- from gym import Env, spaces
+
 
 # SHAP
 try:
