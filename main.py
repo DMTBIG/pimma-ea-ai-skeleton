@@ -1,4 +1,4 @@
-from flask import Flask,request, jsonify, send_file
+from flask import Flask, jsonify, send_file
 import os
 import logging
 import json
@@ -328,7 +328,6 @@ def _retrain_model_core(data_path=TRADE_DATA_LOG_FILE, output_model_path=MODEL_P
     """Core logic for retraining the model."""
     start_time = time.time() # ย้าย start_time มาอยู่นอก try หรือบรรทัดแรกใน try ก็ได้
                            # ถ้าอยู่นอก try จะทำให้คำนวณ duration ได้แม้เกิด error ก่อนเริ่ม try
-
     try: # <--- try block หลักของฟังก์ชัน
         # --- ส่วนที่ 1: โหลดและตรวจสอบข้อมูล ---
         if not os.path.exists(data_path):
@@ -583,8 +582,7 @@ def explain_shap_route(): # เปลี่ยนชื่อฟังก์ช�
 
         feats_input = payload['features']
         if not isinstance(feats_input, list):
-             return jsonify({"error": "'features' must be a list of numbers"}), 400
-        
+             return jsonify({"error": "'features' must be a list of numbers"}), 400        
         # SHAP TreeExplainer คาดหวัง input เป็น 2D array (n_samples, n_features)
         # ในที่นี้เรารับ features สำหรับ 1 instance
         try:
@@ -854,7 +852,6 @@ def retrain_route():
                  logging.info(f"[RETRAIN_ROUTE_THREAD] Retrain successful via route: {message}")
              else:
                  logging.error(f"[RETRAIN_ROUTE_THREAD] Retrain failed via route: {message}")
-
     thread = threading.Thread(target=_run_and_log)
     thread.start()
     
@@ -1114,7 +1111,6 @@ def _run_walking_forward_test_core(
 
             if test_end_idx > len(df_wft_data): # Ensure test data does not exceed bounds
                 break 
-
             train_set = df_wft_data.iloc[train_start_idx:train_end_idx]
             test_set = df_wft_data.iloc[test_start_idx:test_end_idx]
             
@@ -1221,9 +1217,7 @@ def wft_summary_route():
 
         if len(df_wft) < 1 : # Need at least one point to plot meaningfully
              return error_html_template.format(color="orange", message=f"⚠️ Not enough valid data in WFT results to generate chart."), 200
-
         img64 = _generate_plot_base64(_plot_wft_summary, df_wft)
-        
         return f"""
         <html><head><title>WFT Summary</title></head><body>
             <h1>📈 Walking Forward Test Summary</h1>
