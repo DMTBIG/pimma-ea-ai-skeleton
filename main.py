@@ -19,11 +19,10 @@ from gym import spaces
 from stable_baselines3 import PPO
 
 # Standard Library Imports first, then third-party, then local
-# (Order is generally good, just consolidated)
 
 # === Auto-install and Import Core Dependencies ===
 
-# Requests (Imported once at the top, auto-install if missing)
+# Requests
 try:
     import requests
 except ImportError:
@@ -32,10 +31,10 @@ except ImportError:
     import requests
     print("Requests library installed and imported.")
 
-# Matplotlib (Imported once at the top, auto-install if missing)
+# Matplotlib
 try:
     import matplotlib
-    matplotlib.use('Agg')  # Use Agg backend for non-interactive plotting in threads
+    matplotlib.use('Agg')  # Use Agg backend for non-interactive plotting
     import matplotlib.pyplot as plt
     matplotlib.rcParams['font.family'] = 'Arial'  # Set default font
 except ImportError:
@@ -49,19 +48,17 @@ except ImportError:
 
 # stable-baselines3 and gym
 try:
-    import gym
-    import stable_baselines3
-
+    import gym # noqa
+    import stable_baselines3 # noqa
     print("Gym, Stable-Baselines3, and Shimmy are already installed.")
 except ImportError:
     print("stable-baselines3, gym, or shimmy not found, attempting to install all...")
-    # Ensure 'subprocess' and 'sys' are imported at the very top of your file
     subprocess.check_call([sys.executable, "-m", "pip", "install", "gym", "stable-baselines3", "shimmy~=2.0"])
-    import gym
-    import stable_baselines3
+    import gym # noqa
+    import stable_baselines3 # noqa
     print("gym, stable-baselines3, and shimmy installed and imported successfully.")
 
-from stable_baselines3.common.vec_env import DummyVecEnv  # อาจจำเป็นถ้า PIMMAEnv ไม่ได้เป็น VecEnv โดยตรง
+from stable_baselines3.common.vec_env import DummyVecEnv
 
 
 # SHAP
@@ -70,30 +67,25 @@ try:
     print("SHAP is already installed.")
 except ImportError:
     print("SHAP library not found, attempting to install...")
-    # SHAP can sometimes have specific dependencies, simple install first
     subprocess.check_call([sys.executable, "-m", "pip", "install", "shap"])
     import shap
     print("SHAP library installed and imported successfully.")
 
 # === Global Configuration & Initialization ===
-# Create necessary folders
 os.makedirs("logs", exist_ok=True)
 os.makedirs("models", exist_ok=True)
-os.makedirs("presets", exist_ok=True)  # Ensure presets folder exists
+os.makedirs("presets", exist_ok=True)
 baseline_mean = None
 explainer = None
 
-# Logging Configuration
 logging.basicConfig(
     filename="logs/ai_service.log",
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s"
 )
 
-# Flask App Initialization
 app = Flask(__name__)
 
-# --- Constants ---
 MODEL_PATH = "models/trained_model.xgb"
 BEST_MODEL_PATH = "models/best_model.xgb"
 TRADE_DATA_LOG_FILE = "logs/trade_data.csv"
@@ -103,10 +95,9 @@ EXECUTION_FAILURES_CSV = "logs/execution_failures.csv"
 EXIT_DECISIONS_CSV = "logs/exit_decisions.csv"
 AI_FAIL_ENTRY_CSV = "logs/ai_fail_entry.csv"
 
-# --- Global Variables ---
-USE_FAKE_MODEL = os.environ.get("USE_FAKE_MODEL", "False").lower() == "true"  # Control via env variable
-model = None  # Will hold the loaded XGBoost model
-ENFORCE_LICENSE = False  # Toggle for license enforcement
+USE_FAKE_MODEL = os.environ.get("USE_FAKE_MODEL", "False").lower() == "true"
+model = None
+ENFORCE_LICENSE = False
 ALLOWED_LICENSE_KEYS = {"ABC123", "YOUR_VALID_KEY_HERE"}
 
 
@@ -130,7 +121,8 @@ def _save_retrain_status(status, samples_used, duration_seconds, file_path=LAST_
         with open(file_path, "w") as f:
             json.dump(data, f, indent=2)
         logging.info(
-            f"[RETRAIN_STATUS_SAVE] Status saved: {status}, Samples: {samples_used}, Duration: {duration_seconds}s"
+            f"[RETRAIN_STATUS_SAVE] Status saved: {status}, "
+            f"Samples: {samples_used}, Duration: {duration_seconds}s"
         )
     except IOError as e:
         logging.error(f"[RETRAIN_STATUS_SAVE] Error saving retrain status to {file_path}: {e}", exc_info=True)
@@ -139,8 +131,8 @@ def _save_retrain_status(status, samples_used, duration_seconds, file_path=LAST_
 # === Reinforcement Learning (RL) Setup ===
 
 def _initialize_shap_explainer():
-    global model, explainer  # model is global and potentially modified elsewhere, explainer is assigned here
-    if model is not None and isinstance(model, xgb.XGBModel):  # ตรวจสอบว่าเป็น XGBoost model
+    global model, explainer
+    if model is not None and isinstance(model, xgb.XGBModel):
         try:
             explainer = shap.TreeExplainer(model)
             logging.info("[SHAP_INIT] SHAP TreeExplainer initialized successfully for the XGBoost model.")
@@ -159,19 +151,18 @@ def _initialize_shap_explainer():
         logging.info("[SHAP_INIT] Main model not loaded. SHAP explainer not initialized.")
 
 
-MODEL_FOLDER = "models"  # ตรวจสอบว่าตรงกับที่คุณใช้งาน
-os.makedirs(MODEL_FOLDER, exist_ok=True)  # สร้างโฟลเดอร์ models ถ้ายังไม่มี
+MODEL_FOLDER = "models"
+os.makedirs(MODEL_FOLDER, exist_ok=True)
 
 
-# สร้าง environment แบบง่าย
 class PIMMAEnv(Env):
     def __init__(self, feature_dim_env):
         super().__init__()
         self.observation_space = spaces.Box(-np.inf, np.inf, shape=(feature_dim_env,), dtype=np.float32)
         self.action_space = spaces.Discrete(3)  # 0=hold, 1=buy, 2=sell
-        self.current_obs = np.zeros(self.observation_space.shape, dtype=np.float32)  # Ensure float32
+        self.current_obs = np.zeros(self.observation_space.shape, dtype=np.float32)
         self._current_step = 0
-        self._max_steps = 200  # ตัวอย่าง: กำหนดจำนวน step สูงสุดต่อ episode
+        self._max_steps = 200
 
     def reset(self):
         self.current_obs = np.zeros(self.observation_space.shape, dtype=np.float32)
@@ -180,55 +171,52 @@ class PIMMAEnv(Env):
 
     def step(self, action):
         self._current_step += 1
-        reward = np.random.rand() - 0.5  # Dummy reward: random -0.5 to 0.5
+        reward = np.random.rand() - 0.5
         next_obs = self.current_obs + np.random.normal(0, 0.1, self.current_obs.shape).astype(np.float32)
-        self.current_obs = next_obs  # อัปเดต current_obs สำหรับ step ถัดไป
+        self.current_obs = next_obs
         done = self._current_step >= self._max_steps
         info = {}
         return self.current_obs, reward, done, info
 
-    def render(self, mode='human'):  # Optional
+    def render(self, mode='human'):
         pass
 
-    def close(self):  # Optional
+    def close(self):
         pass
 
 
-# โหลดหรือสร้าง policy
-feature_dim = 45  # เท่ากับจำนวนฟีเจอร์ (used by PIMMAEnv and rl_predict)
+feature_dim = 45
 rl_model_path = os.path.join(MODEL_FOLDER, "rl_model.zip")
-rl_model = None # Initialize rl_model
+rl_model = None
 
 if os.path.isfile(rl_model_path):
     try:
         rl_model = PPO.load(rl_model_path)
         if rl_model.get_env() is None:
-            temp_env = PIMMAEnv(feature_dim)
-            rl_model.set_env(DummyVecEnv([lambda: temp_env]))
+            temp_env_load = PIMMAEnv(feature_dim)
+            rl_model.set_env(DummyVecEnv([lambda: temp_env_load]))
         logging.info(f"[RL_SETUP] Loaded RL model from {rl_model_path}")
     except Exception as e:
         logging.error(f"[RL_SETUP] Error loading RL model from {rl_model_path}: {e}. Creating new model.", exc_info=True)
-        temp_env = PIMMAEnv(feature_dim)
-        rl_env_for_new_model = DummyVecEnv([lambda: temp_env])
-        rl_model = PPO("MlpPolicy", rl_env_for_new_model, verbose=0, n_steps=128)
+        temp_env_create = PIMMAEnv(feature_dim)
+        rl_env_for_new_model_load_fail = DummyVecEnv([lambda: temp_env_create])
+        rl_model = PPO("MlpPolicy", rl_env_for_new_model_load_fail, verbose=0, n_steps=128)
         rl_model.save(rl_model_path)
         logging.info(f"[RL_SETUP] Created and saved new RL model to {rl_model_path}")
 else:
-    temp_env = PIMMAEnv(feature_dim)
-    rl_env_for_new_model = DummyVecEnv([lambda: temp_env])
-    rl_model = PPO("MlpPolicy", rl_env_for_new_model, verbose=0, n_steps=128)
+    temp_env_new = PIMMAEnv(feature_dim)
+    rl_env_for_new_model_no_file = DummyVecEnv([lambda: temp_env_new])
+    rl_model = PPO("MlpPolicy", rl_env_for_new_model_no_file, verbose=0, n_steps=128)
     rl_model.save(rl_model_path)
     logging.info(f"[RL_SETUP] New RL model created and saved to {rl_model_path}")
 
-
-# buffer เก็บ transitions
 rl_buffer = []
 buffer_lock = threading.Lock()
 
 
 # === Model Loading ===
 def load_model(path=MODEL_PATH):
-    global model  # model is assigned here
+    global model
     if os.path.exists(path) and not USE_FAKE_MODEL:
         try:
             model = joblib.load(path)
@@ -242,15 +230,11 @@ def load_model(path=MODEL_PATH):
     else:
         logging.warning(f"[MODEL STATUS] ⚠️ Model file not found at {path} and not using FAKE model.")
         model = None
-
     _initialize_shap_explainer()
-
-    if model is not None or USE_FAKE_MODEL:
-        return True
-    return False
+    return model is not None or USE_FAKE_MODEL
 
 
-# global model # This line (./main.py:142:5) is redundant as load_model handles the global
+# Removed redundant `global model` that was here (approx line 142 in previous reports)
 load_model()  # Initial attempt to load the model
 
 
@@ -264,11 +248,10 @@ def predict_entry_logic(features):
         if not isinstance(features, list) or not all(isinstance(f, (int, float)) for f in features):
             logging.error(f"[PREDICT_LOGIC] Invalid features format: {features}. Expected list of numbers.")
             return round(np.random.uniform(0, 1), 4)
-
         prediction = model.predict(np.array([features]))[0]
         return float(prediction)
-    except Exception as e: # Error ./main.py:291:9: F841 was here
-        logging.error(f"[PREDICT_LOGIC] Error during prediction: {e}", exc_info=True)
+    except Exception as e:
+        logging.error(f"[PREDICT_LOGIC] Error during prediction: {e}", exc_info=True)  # Used 'e' here
         return round(np.random.uniform(0, 1), 4)
 
 
@@ -297,7 +280,7 @@ def _retrain_model_core(data_path=TRADE_DATA_LOG_FILE, output_model_path=MODEL_P
             return False, "Invalid data in 'result' column", 0, duration_err
 
         processed_data = []
-        for index, row in df.iterrows():
+        for _idx, row in df.iterrows():  # Changed index to _idx as it's not used
             features = parse_feature_string(row['features'])
             if features:
                 processed_data.append({'X': features, 'y': row['result']})
@@ -308,6 +291,12 @@ def _retrain_model_core(data_path=TRADE_DATA_LOG_FILE, output_model_path=MODEL_P
             logging.error("[RETRAIN_CORE] No valid features data after parsing to train the model.")
             return False, "No valid features to train on", 0, duration_err
 
+        # Check if processed_data is not empty before accessing its first element
+        if not processed_data: # This check is technically redundant due to the one above, but good for safety
+            # This part of the code should not be reached if the above check works
+            logging.error("[RETRAIN_CORE] Critical: processed_data is empty before feature_length definition.")
+            return False, "Critical: processed_data empty", 0, round(time.time() - start_time, 2)
+
         feature_length = len(processed_data[0]['X'])
         X_final = []
         y_final = []
@@ -317,8 +306,7 @@ def _retrain_model_core(data_path=TRADE_DATA_LOG_FILE, output_model_path=MODEL_P
                 y_final.append(item['y'])
             else:
                 logging.warning(
-                    f"[RETRAIN_CORE] Inconsistent feature length found. "
-                    f"Expected {feature_length}, got {len(item['X'])}. Skipping row."
+                    f"[RETRAIN_CORE] Inconsistent feature length. Expected {feature_length}, got {len(item['X'])}. Skipping."
                 )
 
         if not X_final:
@@ -334,12 +322,12 @@ def _retrain_model_core(data_path=TRADE_DATA_LOG_FILE, output_model_path=MODEL_P
         duration = round(time.time() - start_time, 2)
         _save_retrain_status("success", len(X_final), duration)
         logging.info(
-            f"[RETRAIN_CORE] Model retrained successfully. Samples: {len(X_final)}, "
+            f"[RETRAIN_CORE] Model retrained. Samples: {len(X_final)}, "  # Shorter log
             f"Duration: {duration}s. Saved to {output_model_path}"
         )
 
         if output_model_path == MODEL_PATH:
-            global model  # model is assigned here
+            global model
             model = model_new
             logging.info("[RETRAIN_CORE] Global model updated with newly retrained model.")
             _initialize_shap_explainer()
@@ -355,7 +343,6 @@ def _retrain_model_core(data_path=TRADE_DATA_LOG_FILE, output_model_path=MODEL_P
 
 # === Data Logging Functions ===
 def log_trade_data(command, features_str, result=None, ticket=None, file_path=TRADE_DATA_LOG_FILE):
-    """Logs trade-related data to a CSV file."""
     log_entry = {
         "timestamp": datetime.now().isoformat(),
         "command": str(command),
@@ -374,7 +361,6 @@ def log_trade_data(command, features_str, result=None, ticket=None, file_path=TR
 
 
 def log_generic_csv(file_path, data_dict):
-    """Logs a dictionary to a specified CSV file."""
     df_entry = pd.DataFrame([data_dict])
     try:
         if not os.path.exists(file_path):
@@ -387,7 +373,6 @@ def log_generic_csv(file_path, data_dict):
 
 # === License Key System ===
 def validate_license(http_request):
-    """Validates the license key from the request headers."""
     if not ENFORCE_LICENSE:
         return True
     license_key = http_request.headers.get("X-License-Key", "")
@@ -422,17 +407,14 @@ def predict_route():
         features_list = parse_feature_string(features_str)
 
         if not features_list:
-            logging.warning(f"[PREDICT_ROUTE] Received empty or invalid features string: {features_str}")
+            logging.warning(f"[PREDICT_ROUTE] Received empty/invalid features: {features_str}")
             return jsonify({"error": "Invalid or empty features string provided"}), 400
 
-        logging.info(f"[PREDICT_ROUTE] Received features (sample): {features_list[:5]}… total={len(features_list)}")
-
+        logging.info(f"[PREDICT_ROUTE] Features (sample): {features_list[:5]}… total={len(features_list)}")
         ai_score = predict_entry_logic(features_list)
-
         logging.info(f"[PREDICT_ROUTE] AI Score: {ai_score:.4f}")
         log_trade_data("PREDICT_ENTRY", features_str, ai_score)
         return jsonify(ai_score), 200
-
     except Exception as e:
         logging.error(f"[PREDICT_ROUTE] Exception occurred: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
@@ -447,7 +429,6 @@ def optimize_route():
         json_str = raw_data.decode('utf-8')
         payload = json.loads(json_str)
         params = payload.get("current_params", payload)
-
         optimized = {}
         for k, v_str in params.items():
             try:
@@ -457,13 +438,12 @@ def optimize_route():
             except ValueError:
                 logging.warning(f"[OPTIMIZER] Could not convert param {k} value '{v_str}' to float. Skipping.")
                 optimized[k] = v_str
-
         logging.info(f"[OPTIMIZER] Optimized result: {optimized}")
         return jsonify(optimized), 200
     except json.JSONDecodeError as e:
         logging.error("[OPTIMIZER] JSON decode error", exc_info=True)
-        raw_data_sample = raw_data[:100].decode('utf-8', errors='replace')
-        return jsonify({"error": f"Invalid JSON: {e}", "raw_data_sample": raw_data_sample}), 400
+        raw_sample = raw_data[:100].decode('utf-8', errors='replace')
+        return jsonify({"error": f"Invalid JSON: {e}", "raw_data_sample": raw_sample}), 400
     except Exception as e:
         logging.error(f"[OPTIMIZER] Error occurred: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
@@ -477,7 +457,6 @@ def monitor_route():
             model_status_str = "FAKE"
         elif model is not None:
             model_status_str = "REAL"
-
         info = {
             "model_status": model_status_str,
             "model_path_configured": MODEL_PATH,
@@ -500,7 +479,6 @@ def retrain_status_route():
     try:
         with open(LAST_RETRAIN_JSON, "r") as f:
             data = json.load(f)
-
         html = f"""
         <html><head><title>🧠 Retrain Status</title></head><body>
             <h2>🧠 AI Model Retrain Status</h2>
@@ -538,12 +516,10 @@ def explain_shap_route():
         return jsonify(
             {"error": "SHAP explainer not initialized. Model might not be loaded or compatible."}
         ), 503
-
     try:
         payload = request.get_json()
         if not payload or "features" not in payload:
             return jsonify({"error": "Missing 'features' in payload"}), 400
-
         feats_input = payload['features']
         if not isinstance(feats_input, list):
             return jsonify({"error": "'features' must be a list of numbers"}), 400
@@ -551,16 +527,13 @@ def explain_shap_route():
             feats = np.array(feats_input, dtype=np.float32).reshape(1, -1)
         except ValueError as ve:
             return jsonify({"error": f"Invalid feature format or type: {ve}"}), 400
-
         if hasattr(model, 'n_features_in_') and feats.shape[1] != model.n_features_in_:
-            error_msg = (
+            err_msg = (
                 f"Feature mismatch. Expected {model.n_features_in_} features, "
                 f"got {feats.shape[1]}."
             )
-            return jsonify({"error": error_msg}), 400
-
+            return jsonify({"error": err_msg}), 400
         shap_values_for_instance = explainer.shap_values(feats)
-
         if isinstance(shap_values_for_instance, list):
             shap_values_to_send = shap_values_for_instance[0].tolist()
             base_val = explainer.expected_value[0] \
@@ -571,12 +544,7 @@ def explain_shap_route():
         else:
             logging.error(f"[EXPLAIN_SHAP] Unexpected shap_values format: {type(shap_values_for_instance)}")
             return jsonify({"error": "Unexpected SHAP values format from explainer."}), 500
-
-        return jsonify({
-            "shap_values": shap_values_to_send,
-            "base_value": float(base_val)
-        })
-
+        return jsonify({"shap_values": shap_values_to_send, "base_value": float(base_val)})
     except Exception as e:
         logging.error(f"[EXPLAIN_SHAP] Error calculating SHAP values: {e}", exc_info=True)
         return jsonify({"error": f"Could not calculate SHAP values: {str(e)}"}), 500
@@ -589,31 +557,23 @@ def summary_route():
     try:
         if not os.path.exists(TRADE_DATA_LOG_FILE):
             return jsonify({"error": f"{TRADE_DATA_LOG_FILE} not found. No data to summarize."}), 404
-
         df = pd.read_csv(TRADE_DATA_LOG_FILE)
         df = df[df['result'].notna() & (df['result'] != "")]
         df['result'] = pd.to_numeric(df['result'], errors='coerce')
         df.dropna(subset=['result'], inplace=True)
-
         if df.empty:
             return jsonify({"message": "No valid trade results found to summarize."}), 200
-
         total_trades = len(df)
         avg_result = float(round(df['result'].mean(), 4)) if not df['result'].empty else 0.0
         std_dev_result = float(round(df['result'].std(), 4)) if not df['result'].empty else 0.0
         max_win = float(round(df['result'].max(), 4)) if not df['result'].empty else 0.0
         max_loss = float(round(df['result'].min(), 4)) if not df['result'].empty else 0.0
         winrate = float(round((df['result'] > 0).sum() / total_trades * 100, 2)) if total_trades > 0 else 0.0
-
         stats = {
-            "total_trades": total_trades,
-            "average_result": avg_result,
-            "std_deviation_result": std_dev_result,
-            "max_win": max_win,
-            "max_loss": max_loss,
-            "winrate_percent": winrate,
-            "last_updated": datetime.now().isoformat(),
-            "data_source": TRADE_DATA_LOG_FILE
+            "total_trades": total_trades, "average_result": avg_result,
+            "std_deviation_result": std_dev_result, "max_win": max_win,
+            "max_loss": max_loss, "winrate_percent": winrate,
+            "last_updated": datetime.now().isoformat(), "data_source": TRADE_DATA_LOG_FILE
         }
         logging.info("[SUMMARY] Generated summary stats.")
         return jsonify(stats), 200
@@ -623,10 +583,8 @@ def summary_route():
 
 
 def _generate_plot_base64(plot_function, *args, **kwargs):
-    """Helper to generate a plot and return its base64 encoded string."""
     fig, ax = plt.subplots(figsize=(10, 5))
     plot_function(ax, *args, **kwargs)
-
     buf = io.BytesIO()
     plt.savefig(buf, format="png", bbox_inches='tight')
     buf.seek(0)
@@ -636,7 +594,6 @@ def _generate_plot_base64(plot_function, *args, **kwargs):
 
 
 def _plot_cumulative_pnl(ax, pnl_series):
-    """Plots cumulative P&L on a given Matplotlib Axes object."""
     ax.plot(np.cumsum(pnl_series), label="Cumulative Result", color='green')
     ax.set_title("AI Result Summary (Cumulative)")
     ax.set_xlabel("Number of Trades/Events")
@@ -649,7 +606,7 @@ def _plot_cumulative_pnl(ax, pnl_series):
 def visualize_summary_route():
     if not validate_license(request):
         return jsonify({"error": "Invalid license"}), 403
-    error_html_template = """
+    err_html = """
         <html><head><title>AI Profit Summary</title></head><body>
             <h1>📊 AI Profit Summary</h1>
             <p style="color:{color};font-weight:bold;">{message}</p>
@@ -658,26 +615,16 @@ def visualize_summary_route():
         </body></html>"""
     try:
         if not os.path.exists(TRADE_DATA_LOG_FILE):
-            return error_html_template.format(
-                color="orange",
-                message=f"⚠️ Data file '{TRADE_DATA_LOG_FILE}' not found."
-            ), 404
-
+            return err_html.format(color="orange", message=f"⚠️ Data file '{TRADE_DATA_LOG_FILE}' not found."), 404
         df = pd.read_csv(TRADE_DATA_LOG_FILE)
         if "result" not in df.columns:
-            return error_html_template.format(color="red", message="❌ 'result' column not found in data."), 200
-
+            return err_html.format(color="red", message="❌ 'result' column not found in data."), 200
         df['result'] = pd.to_numeric(df['result'], errors='coerce')
         pnl_series = df["result"].dropna()
-
         if len(pnl_series) < 2:
-            return error_html_template.format(
-                color="orange",
-                message="⚠️ Not enough valid result data (at least 2 points required) to generate a chart."
-            ), 200
-
+            msg = "⚠️ Not enough valid result data (at least 2 points required) to generate a chart."
+            return err_html.format(color="orange", message=msg), 200
         img64 = _generate_plot_base64(_plot_cumulative_pnl, pnl_series)
-
         return f"""
         <html><head><title>AI Profit Summary</title></head><body>
             <h1>📊 AI Profit Summary</h1>
@@ -688,7 +635,7 @@ def visualize_summary_route():
         </body></html>""", 200
     except Exception as e:
         logging.error(f"[VISUALIZE_SUMMARY] Error generating chart: {e}", exc_info=True)
-        return error_html_template.format(color="red", message=f"❌ An error occurred: {e}"), 500
+        return err_html.format(color="red", message=f"❌ An error occurred: {e}"), 500
 
 
 # --- Placeholder/Simple Data Routes ---
@@ -712,9 +659,7 @@ def social_route():
 def macro_route():
     name = request.args.get('name', 'PMI')
     return jsonify(
-        indicator_name=name,
-        value=round(np.random.uniform(45, 55), 1),
-        source="Placeholder Macro Data API"
+        indicator_name=name, value=round(np.random.uniform(45, 55), 1), source="Placeholder Macro Data API"
     ), 200
 
 
@@ -722,8 +667,7 @@ def macro_route():
 def orderbook_route():
     symbol = request.args.get('symbol', 'BTCUSD')
     return jsonify(
-        trading_symbol=symbol,
-        imbalance_ratio=round(np.random.uniform(-0.5, 0.5), 3),
+        trading_symbol=symbol, imbalance_ratio=round(np.random.uniform(-0.5, 0.5), 3),
         source="Placeholder Orderbook API"
     ), 200
 
@@ -733,9 +677,7 @@ def onchain_route():
     metric = request.args.get('metric', 'active_addresses')
     sym = request.args.get('symbol', 'ETH')
     return jsonify(
-        crypto_symbol=sym,
-        onchain_metric=metric,
-        value=int(np.random.randint(1000, 100000)),
+        crypto_symbol=sym, onchain_metric=metric, value=int(np.random.randint(1000, 100000)),
         source="Placeholder On-chain API"
     ), 200
 
@@ -750,8 +692,8 @@ def cot_route():
 @app.route("/openinterest", methods=["GET"])
 def openinterest_route():
     logging.info("[OI] Open Interest requested")
-    oi_value = int(np.random.randint(50000, 200000))
-    return jsonify({"symbol": "XAUUSD_Futures", "open_interest": oi_value, "source": "Placeholder OI"}), 200
+    oi = int(np.random.randint(50000, 200000))
+    return jsonify({"symbol": "XAUUSD_Futures", "open_interest": oi, "source": "Placeholder OI"}), 200
 
 
 @app.route("/news", methods=["GET"])
@@ -770,7 +712,7 @@ def news_route():
 @app.route("/correlation", methods=["GET"])
 def correlation_route():
     logging.info("[CORRELATION] Correlation data requested")
-    correlation_data = {
+    corr_data = {
         "target_asset": "XAUUSD",
         "correlations": {
             "DXY": round(np.random.uniform(-0.9, -0.2), 2),
@@ -779,7 +721,7 @@ def correlation_route():
         },
         "source": "Placeholder Correlation Engine"
     }
-    return jsonify(correlation_data), 200
+    return jsonify(corr_data), 200
 
 
 @app.route("/vwap", methods=["GET"])
@@ -787,10 +729,8 @@ def vwap_route():
     symbol = request.args.get('symbol', 'XAUUSD')
     logging.info(f"[VWAP] VWAP requested for {symbol}")
     data = {
-        "symbol": symbol,
-        "vwap": round(np.random.uniform(1900, 2100), 2),
-        "timeframe": "1H",
-        "source": "Placeholder VWAP"
+        "symbol": symbol, "vwap": round(np.random.uniform(1900, 2100), 2),
+        "timeframe": "1H", "source": "Placeholder VWAP"
     }
     return jsonify(data), 200
 
@@ -804,8 +744,7 @@ def volumeprofile_route():
         "point_of_control": round(np.random.uniform(1950, 1970), 2),
         "high_volume_node": round(np.random.uniform(1920, 1980), 2),
         "low_volume_node": round(np.random.uniform(1850, 1900), 2),
-        "timeframe": "Daily",
-        "source": "Placeholder Volume Profile"
+        "timeframe": "Daily", "source": "Placeholder Volume Profile"
     }
     return jsonify(profile), 200
 
@@ -816,13 +755,11 @@ def harmonics_route():
     logging.info(f"[Harmonics] Harmonic Pattern scan requested for {symbol}")
     patterns = ["Gartley", "Bat", "Butterfly", "Crab", "Shark"]
     data = {
-        "symbol": symbol,
-        "pattern_detected": np.random.choice(patterns),
+        "symbol": symbol, "pattern_detected": np.random.choice(patterns),
         "status": "developing" if np.random.rand() > 0.3 else "valid_entry_zone",
         "entry_zone_start": round(np.random.uniform(1.0500, 1.0600), 4),
         "entry_zone_end": round(np.random.uniform(1.0601, 1.0700), 4),
-        "timeframe": "H4",
-        "source": "Placeholder Harmonics Scanner"
+        "timeframe": "H4", "source": "Placeholder Harmonics Scanner"
     }
     return jsonify(data), 200
 
@@ -836,17 +773,16 @@ def retrain_route():
 
     def _run_and_log():
         with app.app_context():
-            success, message, samples, duration = _retrain_model_core()
+            success, message, _, _ = _retrain_model_core()  # samples, duration not used here
             if success:
                 logging.info(f"[RETRAIN_ROUTE_THREAD] Retrain successful via route: {message}")
             else:
                 logging.error(f"[RETRAIN_ROUTE_THREAD] Retrain failed via route: {message}")
     thread = threading.Thread(target=_run_and_log)
     thread.start()
-
     return jsonify({
         "status": "triggered",
-        "message": "Retrain process initiated in the background. Check /retrain_status for updates."
+        "message": "Retrain process initiated. Check /retrain_status for updates."
     }), 202
 
 
@@ -858,22 +794,18 @@ def log_result_route():
         payload = request.get_json()
         ticket = payload.get("ticket")
         result_val = payload.get("result")
-
         if ticket is None or result_val is None:
             return jsonify({"error": "Missing 'ticket' or 'result' in payload"}), 400
-
         try:
             ticket = int(ticket)
             result_val = float(result_val)
         except ValueError:
             return jsonify({"error": "Ticket must be an integer and result must be a float."}), 400
-
         if not os.path.exists(TRADE_DATA_LOG_FILE):
             log_trade_data("RESULT_LOGGED_NO_PRIOR_PREDICT", f"Ticket: {ticket}", result_val, ticket)
             return jsonify(
                 {"status": "logged_as_new", "message": "No prior predict entry to update, logged as new result."}
             ), 201
-
         df = pd.read_csv(TRADE_DATA_LOG_FILE)
         updated = False
         for idx in range(len(df) - 1, -1, -1):
@@ -884,25 +816,19 @@ def log_result_route():
                     df.loc[idx, "result"] = result_val
                     updated = True
                     break
-
         if updated:
             df.to_csv(TRADE_DATA_LOG_FILE, index=False)
-            logging.info(f"[LOG_RESULT] Successfully updated trade log for ticket {ticket} with result {result_val}.")
+            logging.info(f"[LOG_RESULT] Updated trade log for ticket {ticket} with result {result_val}.")
             return jsonify({"status": "success", "message": f"Result for ticket {ticket} logged."}), 200
         else:
             log_trade_data("RESULT_LOGGED_ORPHANED", f"Ticket: {ticket}", result_val, ticket)
             logging.warning(
-                f"[LOG_RESULT] No matching PREDICT_ENTRY found to update for ticket {ticket}. "
-                "Logged as orphaned result."
+                f"[LOG_RESULT] No matching PREDICT_ENTRY for ticket {ticket}. Logged as orphaned."
             )
             return jsonify(
                 {"status": "not_found_or_already_logged",
-                 "message": (
-                     "No unlogged PREDICT_ENTRY to associate this result with, "
-                     "or it was already logged. Logged as new/orphaned."
-                 )}
+                 "message": "No unlogged PREDICT_ENTRY to associate. Logged as new/orphaned."}
             ), 202
-
     except Exception as e:
         logging.error(f"[LOG_RESULT] Exception occurred: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
@@ -917,50 +843,37 @@ def log_execution_failure_route():
         payload = json.loads(json_str)
     except (UnicodeDecodeError, json.JSONDecodeError) as e:
         logging.error(
-            f"[LOG_EXEC_FAIL] JSON parse/decode error: {e}. Raw (first 100 bytes): {raw_data[:100]!r}",
-            exc_info=True
+            f"[LOG_EXEC_FAIL] JSON parse error: {e}. Raw (100B): {raw_data[:100]!r}", exc_info=True
         )
         log_entry = {
-            "timestamp": datetime.now().isoformat(),
-            "error_type": "PayloadParseError",
-            "details": str(e),
-            "raw_payload_sample": raw_data[:200].decode('ascii', errors='replace')
+            "timestamp": datetime.now().isoformat(), "error_type": "PayloadParseError",
+            "details": str(e), "raw_payload_sample": raw_data[:200].decode('ascii', errors='replace')
         }
         log_generic_csv(EXECUTION_FAILURES_CSV, log_entry)
         return jsonify({"error": f"Invalid JSON or encoding: {e}", "raw_bytes_sample": list(raw_data[:64])}), 400
-
     ts = datetime.now().isoformat()
     log_data = {"timestamp": ts}
     log_file_target = None
-
     if "reason" in payload and "ticket" in payload:
         log_file_target = EXECUTION_FAILURES_CSV
         log_data["ticket"] = payload.get("ticket", "")
         log_data["reason"] = payload.get("reason", "Unknown reason")
         log_data["details"] = payload.get("details", "")
-        logging.info(
-            f"[LOG_EXEC_FAIL] Logging execution failure for ticket {log_data['ticket']}: {log_data['reason']}"
-        )
+        logging.info(f"[LOG_EXEC_FAIL] Logged exec failure for ticket {log_data['ticket']}: {log_data['reason']}")
     elif "score" in payload and "method" in payload and "ticket" in payload:
         log_file_target = EXIT_DECISIONS_CSV
         log_data["ticket"] = payload.get("ticket", "")
         log_data["score"] = payload.get("score", 0.0)
         log_data["method"] = payload.get("method", "Unknown method")
         logging.info(
-            f"[LOG_EXIT_DECISION] Logging exit decision for ticket {log_data['ticket']}: "
+            f"[LOG_EXIT_DECISION] Logged exit decision for ticket {log_data['ticket']}: "
             f"Score {log_data['score']}, Method {log_data['method']}"
         )
     else:
-        logging.warning(f"[LOG_EXEC_FAIL] Unknown payload structure for logging: {payload}")
-        log_generic_csv(
-            "logs/malformed_failure_logs.csv",
-            {"timestamp": ts, "payload_received": json.dumps(payload)}
-        )
-        return jsonify(
-            {"error": "Unknown payload structure. Required fields: (ticket, reason) or (ticket, score, method).",
-             "received_payload": payload}
-        ), 400
-
+        logging.warning(f"[LOG_EXEC_FAIL] Unknown payload structure: {payload}")
+        log_generic_csv("logs/malformed_failure_logs.csv", {"timestamp": ts, "payload": json.dumps(payload)})
+        err_msg = "Unknown payload. Required: (ticket, reason) or (ticket, score, method)."
+        return jsonify({"error": err_msg, "received_payload": payload}), 400
     log_generic_csv(log_file_target, log_data)
     return jsonify({"status": "ok", "message": "Log received."}), 200
 
@@ -974,17 +887,13 @@ def log_exit_decision_route_specific():
         s = raw_bytes.rstrip(b'\x00').decode('utf-8')
         payload = json.loads(s)
     except Exception as e:
-        logging.error(f"[LOG_EXIT_DECISION_SPECIFIC] JSON parse error: {e}, raw string: {s!r}", exc_info=True)
+        logging.error(f"[LOG_EXIT_DECISION_SPECIFIC] JSON parse error: {e}, raw: {s!r}", exc_info=True)
         return jsonify({"error": f"Invalid JSON: {e}", "raw_string_content": s}), 400
-
     if not all(k in payload for k in ["ticket", "score", "method"]):
-        return jsonify({"error": "Missing required fields: ticket, score, method", "received_payload": payload}), 400
-
+        return jsonify({"error": "Missing fields: ticket, score, method", "payload": payload}), 400
     log_data = {
-        "timestamp": datetime.now().isoformat(),
-        "ticket": payload.get("ticket", ""),
-        "score": payload.get("score", 0.0),
-        "method": payload.get("method", "")
+        "timestamp": datetime.now().isoformat(), "ticket": payload.get("ticket", ""),
+        "score": payload.get("score", 0.0), "method": payload.get("method", "")
     }
     log_generic_csv(EXIT_DECISIONS_CSV, log_data)
     logging.info(f"[LOG_EXIT_DECISION_SPECIFIC] Logged: {log_data}")
@@ -997,7 +906,6 @@ def log_fail_entry_route():
         payload = request.get_json()
         if not payload:
             return jsonify({"error": "Empty payload"}), 400
-
         log_data = {
             "timestamp": datetime.now().isoformat(),
             "score": payload.get("score", 0.0),
@@ -1014,44 +922,30 @@ def log_fail_entry_route():
 
 # --- HTML View Routes for Logs ---
 def _generate_html_table_page(csv_path, page_title, error_message_not_found):
-    """Helper to generate an HTML page displaying a CSV file as a table."""
     try:
         if not os.path.exists(csv_path):
             raise FileNotFoundError(error_message_not_found)
-
         df = pd.read_csv(csv_path)
         html_table = df.to_html(classes="table table-striped table-hover", index=False, border=0, escape=True)
-
         return f"""
-        <html>
-        <head>
-            <title>{page_title}</title>
+        <html><head><title>{page_title}</title>
             <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
             <style> body {{ padding: 20px; font-family: Arial, sans-serif; }} h1 {{ margin-bottom: 20px; }} </style>
-        </head>
-        <body>
-            <h1>{page_title}</h1>
+        </head><body><h1>{page_title}</h1>
             {html_table if not df.empty else '<p>No data logged yet.</p>'}
             <br><p><a href="/dashboard" class="btn btn-primary">⬅ Back to Dashboard</a></p>
         </body></html>"""
     except FileNotFoundError:
         logging.warning(f"[HTML_TABLE_VIEW] File not found: {csv_path}")
-        return (
-            f"<p style='color:orange;'>⚠️ {error_message_not_found}</p>"
-            "<p><a href='/dashboard'>Back to Dashboard</a></p>"
-        ), 404
+        return f"<p style='color:orange;'>⚠️ {error_message_not_found}</p><p><a href='/dashboard'>Back</a></p>", 404
     except Exception as e:
         logging.error(f"[HTML_TABLE_VIEW] Error loading log for {csv_path}: {e}", exc_info=True)
-        return f"<p style='color:red;'>❌ Error loading log: {e}</p><p><a href='/dashboard'>Back to Dashboard</a></p>", 500
+        return f"<p style='color:red;'>❌ Error loading log: {e}</p><p><a href='/dashboard'>Back</a></p>", 500
 
 
 @app.route("/fail_log", methods=["GET"])
 def fail_log_view_route():
-    return _generate_html_table_page(
-        EXECUTION_FAILURES_CSV,
-        "❌ Execution Failure Log",
-        "Execution failure log not found."
-    )
+    return _generate_html_table_page(EXECUTION_FAILURES_CSV, "❌ Execution Failure Log", "Exec failure log not found.")
 
 
 @app.route("/exit_decision_log", methods=["GET"])
@@ -1066,118 +960,76 @@ def fail_entry_log_view_route():
 
 # --- Walking Forward Test (WFT) ---
 def _run_walking_forward_test_core(
-    data_path=TRADE_DATA_LOG_FILE,
-    output_path=WFT_RESULTS_CSV,
-    train_window=300,
-    test_window=50
+    data_path=TRADE_DATA_LOG_FILE, output_path=WFT_RESULTS_CSV, train_window=300, test_window=50
 ):
     try:
         logging.info("[WFT_CORE] 🔁 Starting Walking Forward Test")
         if not os.path.exists(data_path):
             logging.error(f"[WFT_CORE] Data file not found at {data_path}")
             return {"status": "error", "message": f"Data file not found: {data_path}"}
-
         df = pd.read_csv(data_path)
         df = df[df['command'].str.upper() == "PREDICT_ENTRY"]
         df = df[df['features'].notna() & df['result'].notna() & (df['result'] != "")]
         df['result'] = pd.to_numeric(df['result'], errors='coerce')
         df.dropna(subset=['result'], inplace=True)
-
         parsed_data = []
-        for index, row in df.iterrows():
+        for _idx, row in df.iterrows():
             features = parse_feature_string(row['features'])
             timestamp = pd.to_datetime(row['timestamp'], errors='coerce')
             if features and pd.notna(timestamp):
                 parsed_data.append({'X': features, 'y': row['result'], 'timestamp': timestamp})
-
         if not parsed_data:
             logging.error("[WFT_CORE] No valid feature/result pairs after parsing for WFT.")
             return {"status": "error", "message": "No valid feature/result data for WFT."}
-
         expected_len = len(parsed_data[0]['X'])
         df_wft_data = pd.DataFrame([d for d in parsed_data if len(d['X']) == expected_len])
-
         if len(df_wft_data) < train_window + test_window:
-            msg = (
-                f"Not enough consistent data for WFT "
-                f"(required: {train_window + test_window}, found: {len(df_wft_data)})"
-            )
+            msg = (f"Not enough consistent data for WFT (req: {train_window + test_window}, "
+                   f"found: {len(df_wft_data)})")
             logging.error(f"[WFT_CORE] {msg}")
             return {"status": "error", "message": msg}
-
         df_wft_data = df_wft_data.sort_values("timestamp").reset_index(drop=True)
-
         wft_results_list = []
         total_rounds = (len(df_wft_data) - train_window) // test_window
-
         if total_rounds <= 0:
-            msg = (
-                f"Not enough data for even one WFT round with "
-                f"train_window={train_window}, test_window={test_window}."
-            )
+            msg = (f"Not enough data for one WFT round with train_window={train_window}, test_window={test_window}.")
             logging.error(f"[WFT_CORE] {msg}")
             return {"status": "error", "message": msg}
-
         for i in range(total_rounds):
-            train_start_idx = i * test_window
-            train_end_idx = train_start_idx + train_window
-            test_start_idx = train_end_idx
-            test_end_idx = test_start_idx + test_window
-
-            if test_end_idx > len(df_wft_data):
-                break
-            train_set = df_wft_data.iloc[train_start_idx:train_end_idx]
-            test_set = df_wft_data.iloc[test_start_idx:test_end_idx]
-
+            train_start_idx, train_end_idx = i * test_window, i * test_window + train_window
+            test_start_idx, test_end_idx = train_end_idx, train_end_idx + test_window
+            if test_end_idx > len(df_wft_data): break
+            train_set, test_set = df_wft_data.iloc[train_start_idx:train_end_idx], df_wft_data.iloc[test_start_idx:test_end_idx]
             if train_set.empty or test_set.empty:
                 logging.warning(f"[WFT_CORE] Skipping round {i+1} due to empty train/test set.")
                 continue
-
-            X_train = np.array(train_set['X'].tolist())
-            y_train = np.array(train_set['y'].tolist())
+            X_train, y_train = np.array(train_set['X'].tolist()), np.array(train_set['y'].tolist())
             X_test = np.array(test_set['X'].tolist())
-
-            wft_model = xgb.XGBRegressor(n_estimators=50, max_depth=4, random_state=i)
-            wft_model.fit(X_train, y_train)
-            preds = wft_model.predict(X_test)
-
-            avg_pred_metric = np.mean(preds)
-            std_pred_metric = np.std(preds)
-            winrate_on_pred = np.mean(preds > 0) * 100 if len(preds) > 0 else 0
-            mdd_on_pred = np.min(np.cumsum(preds)) if len(preds) > 0 else 0
-
-            round_result_data = {
-                "round": i + 1,
-                "train_start_ts": train_set['timestamp'].iloc[0].isoformat(),
+            wft_model_obj = xgb.XGBRegressor(n_estimators=50, max_depth=4, random_state=i)
+            wft_model_obj.fit(X_train, y_train)
+            preds = wft_model_obj.predict(X_test)
+            avg_pred, std_pred = np.mean(preds), np.std(preds)
+            win_pred = np.mean(preds > 0) * 100 if preds.size > 0 else 0
+            mdd_pred = np.min(np.cumsum(preds)) if preds.size > 0 else 0
+            res_data = {
+                "round": i + 1, "train_start_ts": train_set['timestamp'].iloc[0].isoformat(),
                 "test_start_ts": test_set['timestamp'].iloc[0].isoformat(),
-                "avg_predicted_metric": round(avg_pred_metric, 4),
-                "std_predicted_metric": round(std_pred_metric, 4),
-                "winrate_on_predicted_metric_percent": round(winrate_on_pred, 2),
-                "max_drawdown_on_predicted_metric": round(mdd_on_pred, 4),
-                "samples_train": len(X_train),
-                "samples_test": len(X_test)
+                "avg_predicted_metric": round(avg_pred, 4), "std_predicted_metric": round(std_pred, 4),
+                "winrate_on_predicted_metric_percent": round(win_pred, 2),
+                "max_drawdown_on_predicted_metric": round(mdd_pred, 4),
+                "samples_train": len(X_train), "samples_test": len(X_test)
             }
-            wft_results_list.append(round_result_data)
-            logging.info(
-                f"[WFT_CORE] Round {i+1}/{total_rounds} complete: "
-                f"AvgPred={avg_pred_metric:.2f}, WinRatePred={winrate_on_pred:.1f}%"
-            )
-
+            wft_results_list.append(res_data)
+            logging.info(f"[WFT_CORE] R {i+1}/{total_rounds}: AvgPred={avg_pred:.2f}, WinRatePred={win_pred:.1f}%")
         if not wft_results_list:
             logging.warning("[WFT_CORE] No WFT rounds were completed.")
             return {"status": "warning", "message": "WFT completed but no rounds generated results."}
-
         results_df = pd.DataFrame(wft_results_list)
         results_df.to_csv(output_path, index=False)
-        logging.info(f"[WFT_CORE] ✅ Walking Forward Test finished. Results saved to {output_path}")
-        return {
-            "status": "success",
-            "message": f"WFT finished. Results saved to {output_path}",
-            "rounds_completed": len(wft_results_list)
-        }
-
+        logging.info(f"[WFT_CORE] ✅ WFT finished. Results: {output_path}")
+        return {"status": "success", "message": f"WFT finished. Results: {output_path}", "rounds": len(wft_results_list)}
     except Exception as e:
-        logging.error(f"[WFT_CORE] ❌ Error in walking forward test: {e}", exc_info=True)
+        logging.error(f"[WFT_CORE] ❌ Error in WFT: {e}", exc_info=True)
         return {"status": "error", "message": f"WFT failed: {str(e)}"}
 
 
@@ -1188,29 +1040,20 @@ def wft_route():
     logging.info("[WFT_ROUTE] WFT initiated via route.")
     train_win = request.args.get('train_window', 300, type=int)
     test_win = request.args.get('test_window', 50, type=int)
-
     thread = threading.Thread(
         target=_run_walking_forward_test_core,
         args=(TRADE_DATA_LOG_FILE, WFT_RESULTS_CSV, train_win, test_win)
     )
     thread.daemon = True
     thread.start()
-    msg = (
-        f"WFT process initiated in background with train_window={train_win}, "
-        f"test_window={test_win}. Check logs or WFT summary page."
-    )
+    msg = (f"WFT initiated (train={train_win}, test={test_win}). Check logs/WFT summary.")
     return jsonify({"status": "triggered", "message": msg}), 202
 
 
 def _plot_wft_summary(ax, df_wft):
-    """Plots WFT summary on a given Matplotlib Axes."""
     ax.plot(df_wft['round'], df_wft['avg_predicted_metric'], label='Avg Predicted Metric', marker='o')
-    ax.plot(
-        df_wft['round'],
-        df_wft['winrate_on_predicted_metric_percent'],
-        label='Winrate on Predicted Metric (%)',
-        marker='x'
-    )
+    ax.plot(df_wft['round'], df_wft['winrate_on_predicted_metric_percent'],
+            label='Winrate on Predicted Metric (%)', marker='x')
     ax.set_title("📊 Walking Forward Test (WFT) Summary")
     ax.set_xlabel("Test Round Number")
     ax.set_ylabel("Performance Metric Value")
@@ -1222,112 +1065,75 @@ def _plot_wft_summary(ax, df_wft):
 def wft_summary_route():
     if not validate_license(request):
         return jsonify({"error": "Invalid license"}), 403
-    error_html_template = """
-        <html><head><title>WFT Summary</title></head><body>
-            <h1>📈 WFT Summary</h1>
+    err_html = """
+        <html><head><title>WFT Summary</title></head><body><h1>📈 WFT Summary</h1>
             <p style="color:{color};font-weight:bold;">{message}</p>
             <p><a href="/wft"><button>🔁 Run WFT Now</button></a>
             <a href="/dashboard"><button>🏠 Back to Dashboard</button></a></p>
         </body></html>"""
     try:
         if not os.path.exists(WFT_RESULTS_CSV):
-            return error_html_template.format(
-                color="orange",
-                message=f"⚠️ WFT results file ('{WFT_RESULTS_CSV}') not found. Please run WFT first."
-            ), 404
-
+            msg = f"⚠️ WFT results file ('{WFT_RESULTS_CSV}') not found. Please run WFT first."
+            return err_html.format(color="orange", message=msg), 404
         df_wft = pd.read_csv(WFT_RESULTS_CSV)
-        if df_wft.empty or 'round' not in df_wft.columns or \
-           'avg_predicted_metric' not in df_wft.columns or \
-           'winrate_on_predicted_metric_percent' not in df_wft.columns:
-            return error_html_template.format(
-                color="red",
-                message="❌ WFT results file is empty or has incorrect columns."
-            ), 200
-
-        df_wft['round'] = pd.to_numeric(df_wft['round'], errors='coerce')
-        df_wft['avg_predicted_metric'] = pd.to_numeric(df_wft['avg_predicted_metric'], errors='coerce')
-        df_wft['winrate_on_predicted_metric_percent'] = pd.to_numeric(
-            df_wft['winrate_on_predicted_metric_percent'],
-            errors='coerce'
-        )
-        df_wft.dropna(subset=['round', 'avg_predicted_metric', 'winrate_on_predicted_metric_percent'], inplace=True)
-
+        req_cols = ['round', 'avg_predicted_metric', 'winrate_on_predicted_metric_percent']
+        if df_wft.empty or not all(col in df_wft.columns for col in req_cols):
+            return err_html.format(color="red", message="❌ WFT results file empty/incorrect columns."), 200
+        for col in req_cols:
+            df_wft[col] = pd.to_numeric(df_wft[col], errors='coerce')
+        df_wft.dropna(subset=req_cols, inplace=True)
         if len(df_wft) < 1:
-            return error_html_template.format(
-                color="orange",
-                message="⚠️ Not enough valid data in WFT results to generate chart."
-            ), 200
+            return err_html.format(color="orange", message="⚠️ Not enough valid WFT data for chart."), 200
         img64 = _generate_plot_base64(_plot_wft_summary, df_wft)
         return f"""
-        <html><head><title>WFT Summary</title></head><body>
-            <h1>📈 Walking Forward Test Summary</h1>
-            <img src="data:image/png;base64,{img64}" alt="WFT Summary Chart"/>
-            <br/><br/>
+        <html><head><title>WFT Summary</title></head><body><h1>📈 WFT Summary</h1>
+            <img src="data:image/png;base64,{img64}" alt="WFT Summary Chart"/><br/><br/>
             <p><a href="/wft"><button>🔁 Run WFT Again</button></a>
             <a href="/download_csv"><button>⬇ trade_data.csv</button></a>
             <a href="/dashboard"><button>🏠 Back to Dashboard</button></a></p>
         </body></html>""", 200
     except Exception as e:
         logging.error(f"[WFT_SUMMARY_ROUTE] Error generating WFT summary chart: {e}", exc_info=True)
-        return error_html_template.format(color="red", message=f"❌ An error occurred: {e}"), 500
+        return err_html.format(color="red", message=f"❌ An error occurred: {e}"), 500
 
 
 def _train_model_from_best_wft_round(
-    wft_results_path=WFT_RESULTS_CSV,
-    trade_data_path=TRADE_DATA_LOG_FILE,
-    output_model_path=BEST_MODEL_PATH,
-    optimize_metric='winrate_on_predicted_metric_percent'
+    wft_results_path=WFT_RESULTS_CSV, trade_data_path=TRADE_DATA_LOG_FILE,
+    output_model_path=BEST_MODEL_PATH, optimize_metric='winrate_on_predicted_metric_percent'
 ):
     try:
         if not os.path.exists(wft_results_path):
             return False, f"WFT results file not found: {wft_results_path}"
-
         df_wft = pd.read_csv(wft_results_path)
         if df_wft.empty or optimize_metric not in df_wft.columns:
             return False, f"WFT results empty or missing optimizing metric '{optimize_metric}'."
-
         best_row = df_wft.loc[df_wft[optimize_metric].idxmax()]
         best_train_start_ts = pd.to_datetime(best_row['train_start_ts'])
-        num_train_samples_in_best_round = int(best_row["samples_train"])
-
-        df_all_trades = pd.read_csv(trade_data_path)
-        df_all_trades = df_all_trades[df_all_trades['command'].str.upper() == "PREDICT_ENTRY"]
-        df_all_trades['result'] = pd.to_numeric(df_all_trades['result'], errors='coerce')
-        df_all_trades.dropna(subset=['features', 'result'], inplace=True)
-        df_all_trades['timestamp'] = pd.to_datetime(df_all_trades['timestamp'])
-        df_all_trades.sort_values('timestamp', inplace=True)
-
-        training_data_for_best_model_list = []
-        for index, row in df_all_trades.iterrows():
+        num_samples = int(best_row["samples_train"])
+        df_all = pd.read_csv(trade_data_path)
+        df_all = df_all[df_all['command'].str.upper() == "PREDICT_ENTRY"]
+        df_all['result'] = pd.to_numeric(df_all['result'], errors='coerce')
+        df_all.dropna(subset=['features', 'result'], inplace=True)
+        df_all['timestamp'] = pd.to_datetime(df_all['timestamp'])
+        df_all.sort_values('timestamp', inplace=True)
+        train_data_list = []
+        for _idx, row in df_all.iterrows():
             if row['timestamp'] >= best_train_start_ts:
                 features = parse_feature_string(row['features'])
                 if features:
-                    training_data_for_best_model_list.append({'X': features, 'y': row['result']})
-                if len(training_data_for_best_model_list) >= num_train_samples_in_best_round:
-                    break
-
-        if len(training_data_for_best_model_list) < num_train_samples_in_best_round:
-            msg = (
-                f"Could not gather enough training samples "
-                f"({len(training_data_for_best_model_list)} found, "
-                f"{num_train_samples_in_best_round} expected) "
-                f"for the best WFT round."
-            )
+                    train_data_list.append({'X': features, 'y': row['result']})
+                if len(train_data_list) >= num_samples: break
+        if len(train_data_list) < num_samples:
+            msg = (f"Could not gather enough training samples ({len(train_data_list)} found, "
+                   f"{num_samples} expected) for the best WFT round.")
             return False, msg
-
-        df_train_best = pd.DataFrame(training_data_for_best_model_list)
-        X_train_best = np.array(df_train_best['X'].tolist())
-        y_train_best = np.array(df_train_best['y'].tolist())
-
-        final_best_model = xgb.XGBRegressor(n_estimators=50, max_depth=4, random_state=int(best_row['round']))
-        final_best_model.fit(X_train_best, y_train_best)
-        joblib.dump(final_best_model, output_model_path)
-
-        msg = (
-            f"Best model trained from WFT round {best_row['round']} "
-            f"(Metric {optimize_metric}: {best_row[optimize_metric]:.2f}). Saved to {output_model_path}."
-        )
+        df_train_best = pd.DataFrame(train_data_list)
+        X_best, y_best = np.array(df_train_best['X'].tolist()), np.array(df_train_best['y'].tolist())
+        final_model = xgb.XGBRegressor(n_estimators=50, max_depth=4, random_state=int(best_row['round']))
+        final_model.fit(X_best, y_best)
+        joblib.dump(final_model, output_model_path)
+        msg = (f"Best model from WFT round {best_row['round']} (Metric {optimize_metric}: "
+               f"{best_row[optimize_metric]:.2f}). Saved to {output_model_path}.")
         logging.info(f"[WFT_BEST_MODEL] {msg}")
         return True, msg
     except Exception as e:
@@ -1339,21 +1145,16 @@ def _train_model_from_best_wft_round(
 def activate_best_wft_model_route():
     if not validate_license(request):
         return jsonify({"error": "Invalid license"}), 403
-    # global model # model is assigned by load_model
     try:
         success, message = _train_model_from_best_wft_round()
         if not success:
-            return jsonify(
-                {"status": "error", "message": f"Failed to train best model from WFT: {message}"}
-            ), 500
-
+            err_msg = f"Failed to train best model from WFT: {message}"
+            return jsonify({"status": "error", "message": err_msg}), 500
         if load_model(path=BEST_MODEL_PATH):
-            return jsonify({"status": "success", "message": f"Best model from WFT activated. {message}"}), 200
+            return jsonify({"status": "success", "message": f"Best WFT model activated. {message}"}), 200
         else:
-            return jsonify(
-                {"status": "error", "message": "Best model trained from WFT but failed to load it as active model."}
-            ), 500
-
+            err_msg = "Best WFT model trained but failed to load as active model."
+            return jsonify({"status": "error", "message": err_msg}), 500
     except Exception as e:
         logging.error(f"[ACTIVATE_BEST_WFT_MODEL] Failed to activate best WFT model: {e}", exc_info=True)
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -1361,38 +1162,31 @@ def activate_best_wft_model_route():
 
 # --- Report Generation ---
 def _create_exit_report_placeholder(output_dir="."):
-    """Creates a placeholder trading exit report (text file)."""
     try:
-        filename_base = f"TradingReport_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        txt_filename = os.path.join(output_dir, f"{filename_base}.txt")
-
-        report_content = f"""
-        Trading Exit Report
-        Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-        ----------------------------------------------------
-        This is a placeholder for the Trading Exit Report.
-
-        Summary of Trades:
-        - (Data from {TRADE_DATA_LOG_FILE} or {EXIT_DECISIONS_CSV} would go here)
-        - Total Trades Considered: ...
-        - Profitable Exits: ...
-        - Losing Exits: ...
-
-        Key Metrics:
-        - Average P&L per Exit: ...
-        - Win Rate of Exits: ...
-        - Largest Winning Exit: ...
-        - Largest Losing Exit: ...
-
-        Notes:
-        - (Any specific observations or issues encountered)
-
-        Future PDF implementations should include charts and more detailed tables.
-        """
-        with open(txt_filename, "w") as f:
-            f.write(report_content)
-        logging.info(f"[REPORT_GEN] ✅ Placeholder report saved as {txt_filename}")
-        return txt_filename
+        fname_base = f"TradingReport_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        txt_fname = os.path.join(output_dir, f"{fname_base}.txt")
+        content = f"""Trading Exit Report
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+----------------------------------------------------
+This is a placeholder for the Trading Exit Report.
+Summary of Trades:
+- (Data from {TRADE_DATA_LOG_FILE} or {EXIT_DECISIONS_CSV} would go here)
+- Total Trades Considered: ...
+- Profitable Exits: ...
+- Losing Exits: ...
+Key Metrics:
+- Average P&L per Exit: ...
+- Win Rate of Exits: ...
+- Largest Winning Exit: ...
+- Largest Losing Exit: ...
+Notes:
+- (Any specific observations or issues encountered)
+Future PDF implementations should include charts and more detailed tables.
+"""
+        with open(txt_fname, "w") as f:
+            f.write(content)
+        logging.info(f"[REPORT_GEN] ✅ Placeholder report saved as {txt_fname}")
+        return txt_fname
     except Exception as e:
         logging.error(f"[REPORT_GEN] ❌ Error generating placeholder report: {e}", exc_info=True)
         return None
@@ -1406,11 +1200,7 @@ def download_report_route():
         reports_dir = os.path.abspath(".")
         files = [f for f in os.listdir(reports_dir) if f.startswith("TradingReport_") and f.endswith(".txt")]
         if not files:
-            return (
-                "<p>❌ No reports (TradingReport_*.txt) found in the application directory.</p>"
-                "<p><a href='/dashboard'>Back to Dashboard</a></p>"
-            ), 404
-
+            return "<p>❌ No reports found.</p><p><a href='/dashboard'>Back</a></p>", 404
         latest_file = sorted(files, key=lambda f: os.path.getmtime(os.path.join(reports_dir, f)), reverse=True)[0]
         return send_file(os.path.join(reports_dir, latest_file), as_attachment=True)
     except Exception as e:
@@ -1427,11 +1217,10 @@ def get_preset_route(name):
         safe_name = "".join(c for c in name if c.isalnum() or c in ('_', '-'))
         if not safe_name:
             return jsonify({"error": "Invalid preset name"}), 400
-
-        preset_file_path = os.path.join("./presets/", f"{safe_name}.json")
-        with open(preset_file_path, "r") as f:
-            preset_data = json.load(f)
-        return jsonify(preset_data)
+        preset_file = os.path.join("./presets/", f"{safe_name}.json")
+        with open(preset_file, "r") as f:
+            data = json.load(f)
+        return jsonify(data)
     except FileNotFoundError:
         logging.warning(f"[PRESET] Preset file not found: presets/{safe_name}.json")
         return jsonify({"error": f"Preset '{safe_name}' not found"}), 404
@@ -1448,32 +1237,23 @@ def drift():
     try:
         if baseline_mean is None:
             logging.error("[DRIFT] baseline_mean is not initialized.")
-            return "Error: Baseline mean not initialized on server.", 500, {'Content-Type': 'text/plain'}
-
+            return "Error: Baseline mean not initialized.", 500, {'Content-Type': 'text/plain'}
         payload = request.get_json()
         if not payload or 'features' not in payload:
-            return "Error: Missing 'features' in JSON payload.", 400, {'Content-Type': 'text/plain'}
-
+            return "Error: Missing 'features' in payload.", 400, {'Content-Type': 'text/plain'}
         feats_input = payload['features']
         if not isinstance(feats_input, list) or not all(isinstance(x, (int, float)) for x in feats_input):
             return "Error: 'features' must be a list of numbers.", 400, {'Content-Type': 'text/plain'}
-
         feats = np.array(feats_input, dtype=float)
         if feats.shape[0] != baseline_mean.shape[0]:
-            logging.warning(f"[DRIFT] Feature length mismatch. Input: {feats.shape[0]}, Baseline: {baseline_mean.shape[0]}")
-            return (
-                f"Error: Feature length mismatch. Expected {baseline_mean.shape[0]} features.",
-                400,
-                {'Content-Type': 'text/plain'}
-            )
-
+            msg = f"Feature length mismatch. Expected {baseline_mean.shape[0]}, got {feats.shape[0]}."
+            logging.warning(f"[DRIFT] {msg}")
+            return f"Error: {msg}", 400, {'Content-Type': 'text/plain'}
         if len(feats) == 0:
             return "Error: Features array cannot be empty.", 400, {'Content-Type': 'text/plain'}
-
-        drift_value = np.linalg.norm(feats - baseline_mean) / len(feats)
-        logging.info(f"[DRIFT] Calculated drift: {drift_value}")
-        return str(float(drift_value)), 200, {'Content-Type': 'text/plain'}
-
+        drift_val = np.linalg.norm(feats - baseline_mean) / len(feats)
+        logging.info(f"[DRIFT] Calculated drift: {drift_val}")
+        return str(float(drift_val)), 200, {'Content-Type': 'text/plain'}
     except Exception as e:
         logging.error(f"[DRIFT] Error calculating drift: {e}", exc_info=True)
         return f"Error: Could not calculate drift - {str(e)}", 500, {'Content-Type': 'text/plain'}
@@ -1487,11 +1267,9 @@ def rl_predict():
         payload = request.get_json()
         if not payload or "features" not in payload:
             return jsonify(error="Missing 'features' in payload"), 400
-
         data = payload["features"]
         if not isinstance(data, list) or len(data) != feature_dim:
             return jsonify(error=f"Features must be a list of {feature_dim} numbers"), 400
-
         obs = np.array(data, dtype=np.float32).reshape(1, -1)
         action, _ = rl_model.predict(obs, deterministic=True)
         return jsonify(action=int(action))
@@ -1502,13 +1280,12 @@ def rl_predict():
 
 @app.route('/rl/store', methods=['POST'])
 def rl_store():
-    global rl_buffer, buffer_lock  # These are modified/used with modification intent
+    global rl_buffer, buffer_lock  # These are modified / used with modification intent
     try:
         payload = request.get_json()
         required_keys = ["obs", "action", "reward", "next_obs", "done"]
         if not payload or not all(key in payload for key in required_keys):
             return jsonify(error=f"Missing one or more required keys: {required_keys}"), 400
-
         with buffer_lock:
             rl_buffer.append(payload)
         return jsonify(status="stored", buffer_size=len(rl_buffer))
@@ -1519,28 +1296,26 @@ def rl_store():
 
 @app.route('/rl/update', methods=['POST'])
 def rl_update():
-    global rl_model, rl_buffer, buffer_lock  # rl_model_path removed as it's only read
+    global rl_model, rl_buffer, buffer_lock  # These are modified / used with modification intent
+                                            # rl_model_path is read from global scope, not needing 'global' here
     if rl_model is None:
         return jsonify(error="RL model not loaded"), 500
-
     transitions_to_learn = []
     with buffer_lock:
         if not rl_buffer:
             return jsonify(status="no_new_data", message="No new transitions in buffer to update model."), 200
         transitions_to_learn = rl_buffer.copy()
         rl_buffer.clear()
-
     logging.info(f"[RL_UPDATE] Starting RL model update with {len(transitions_to_learn)} transitions.")
     try:
         if rl_model.get_env() is None:
             logging.warning("[RL_UPDATE] RL model environment not set. Setting a default one.")
-            temp_env = PIMMAEnv(feature_dim)
-            rl_model.set_env(DummyVecEnv([lambda: temp_env]))
-
+            temp_env_update = PIMMAEnv(feature_dim)
+            rl_model.set_env(DummyVecEnv([lambda: temp_env_update]))
         num_timesteps_to_learn = max(128, len(transitions_to_learn))
         logging.info(f"[RL_UPDATE] Calling rl_model.learn() with total_timesteps={num_timesteps_to_learn}")
         rl_model.learn(total_timesteps=num_timesteps_to_learn, reset_num_timesteps=False)
-        rl_model.save(rl_model_path)  # rl_model_path is read from global scope here
+        rl_model.save(rl_model_path)
         logging.info(f"[RL_UPDATE] RL model updated and saved to {rl_model_path}")
         return jsonify(status="rl_model_updated", transitions_processed=len(transitions_to_learn))
     except Exception as e:
@@ -1551,111 +1326,67 @@ def rl_update():
 # --- Dashboard ---
 @app.route("/dashboard")
 def dashboard_route():
-    # Adjusted button text for E501
-    button_style = "class=\"list-group-item list-group-item-action task-btn btn btn-light\""
-    action_button_style_primary = "class=\"list-group-item list-group-item-action task-btn btn btn-primary\""
-    action_button_style_info = "class=\"list-group-item list-group-item-action task-btn btn btn-info\""
-    action_button_style_success = "class=\"list-group-item list-group-item-action task-btn btn btn-success\""
-    warning_button_style = "class=\"list-group-item list-group-item-action task-btn btn btn-warning\""
-
+    btn_light = "class=\"list-group-item list-group-item-action task-btn btn btn-light\""
+    btn_primary = "class=\"list-group-item list-group-item-action task-btn btn btn-primary\""
+    btn_info = "class=\"list-group-item list-group-item-action task-btn btn btn-info\""
+    btn_success = "class=\"list-group-item list-group-item-action task-btn btn btn-success\""
+    btn_warning = "class=\"list-group-item list-group-item-action task-btn btn btn-warning\""
     html_content = f"""
-    <html>
-    <head>
-        <title>📊 AI Trading Dashboard</title>
+    <html><head><title>📊 AI Trading Dashboard</title>
         <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
         <style>
             body {{ padding: 20px; font-family: Arial, sans-serif; }}
             .task-btn {{ margin-bottom: 10px; min-width: 250px; }}
-            .container {{ max-width: 800px; }}
-            h1, h2 {{ margin-bottom: 20px; }}
+            .container {{ max-width: 800px; }} h1, h2 {{ margin-bottom: 20px; }}
             .list-group-item a {{ text-decoration: none; }}
             .list-group-item button {{ width: 100%; text-align: left; }}
-        </style>
-        <script>
+        </style><script>
         async function runTask(path, btnId, method = 'GET', body = null) {{
-            const btn = document.getElementById(btnId);
-            const originalText = btn.innerText;
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Processing...';
-            let message = '';
+            const btn = document.getElementById(btnId); const originalText = btn.innerText;
+            btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Processing...';
+            let msg = '';
             try {{
-                const options = {{ method: method }};
-                if (method === 'POST' && body) {{
-                    options.headers = {{'Content-Type': 'application/json'}};
-                    options.body = JSON.stringify(body);
-                }}
-                const res = await fetch(path, options);
-                const data = await res.json();
-                if (res.ok) {{
-                    message = `✅ Success: ${{data.message || JSON.stringify(data)}}`;
-                }} else {{
-                    message = `❌ Error ${{res.status}}: ${{data.error || JSON.stringify(data)}}`;
-                }}
-            }} catch(e) {{
-                message = `❌ Network/Script Error: ${{e}}`;
-            }}
-            alert(message);
-            btn.disabled = false;
-            btn.innerText = originalText;
+                const opts = {{ method: method }};
+                if (method === 'POST' && body) {{ opts.headers = {{'Content-Type': 'application/json'}}; opts.body = JSON.stringify(body); }}
+                const res = await fetch(path, opts); const data = await res.json();
+                msg = res.ok ? `✅ Success: ${{data.message || JSON.stringify(data)}}` : `❌ Error ${{res.status}}: ${{data.error || JSON.stringify(data)}}`;
+            }} catch(e) {{ msg = `❌ Network/Script Error: ${{e}}`; }}
+            alert(msg); btn.disabled = false; btn.innerText = originalText;
         }}
         function viewPage(path) {{ window.location.href = path; }}
-        </script>
-    </head>
-    <body>
-        <div class="container">
-            <h1>📊 AI Trading Dashboard</h1>
-            <h2>🚀 Actions</h2>
-            <div class="list-group mb-4">
-                <button id="retrain-btn" {action_button_style_primary}
-                        onclick="runTask('/retrain','retrain-btn')">
-                    🔁 Trigger Model Retrain
-                </button>
-                <button id="wft-btn" {action_button_style_info}
-                        onclick="runTask('/wft','wft-btn')">
-                    📈 Trigger Walking Forward Test (WFT)
-                </button>
-                <button id="activate-wft-btn" {action_button_style_success}
-                        onclick="runTask('/activate_best_wft_model','activate-wft-btn')">
-                    🌟 Activate Best Model from WFT
-                </button>
-            </div>
-
-            <h2>📈 Status & Visualizations</h2>
-            <div class="list-group mb-4">
-                <button {button_style} onclick="viewPage('/retrain_status')">🧠 View Retrain Status</button>
-                <button {button_style} onclick="viewPage('/summary')">💹 View Trade Summary (JSON)</button>
-                <button {button_style} onclick="viewPage('/visualize_summary')">📊 View Profit Summary Chart</button>
-                <button {button_style} onclick="viewPage('/wft_summary')">📈 View WFT Summary Chart</button>
-                <button {button_style} onclick="runTask('/monitor','monitor-btn-silent')">🩺 API Monitor (Alert)</button>
-                <button {button_style} onclick="viewPage('/explain')">💡 Model Feature Importance (JSON)</button>
-            </div>
-
-            <h2>📄 Logs & Reports</h2>
-            <div class="list-group mb-4">
-                <button {button_style} onclick="viewPage('/download_csv')">⬇ Download Trade Data CSV</button>
-                <button {button_style} onclick="viewPage('/download_report')">📋 Download Latest Report</button>
-                <button {warning_button_style} onclick="viewPage('/fail_log')">❌ View Execution Failure Log</button>
-                <button {warning_button_style} onclick="viewPage('/exit_decision_log')">🚪 View Exit Decision Log</button>
-                <button {warning_button_style} onclick="viewPage('/fail_entry_log')">🚫 View AI Entry Fail Log</button>
-            </div>
-        </div>
-    </body></html>"""
+        </script></head><body><div class="container"><h1>📊 AI Trading Dashboard</h1>
+            <h2>🚀 Actions</h2><div class="list-group mb-4">
+                <button id="retrain-btn" {btn_primary} onclick="runTask('/retrain','retrain-btn')">🔁 Trigger Model Retrain</button>
+                <button id="wft-btn" {btn_info} onclick="runTask('/wft','wft-btn')">📈 Trigger Walking Forward Test (WFT)</button>
+                <button id="activate-wft-btn" {btn_success} onclick="runTask('/activate_best_wft_model','activate-wft-btn')">🌟 Activate Best Model from WFT</button>
+            </div><h2>📈 Status & Visualizations</h2><div class="list-group mb-4">
+                <button {btn_light} onclick="viewPage('/retrain_status')">🧠 View Retrain Status</button>
+                <button {btn_light} onclick="viewPage('/summary')">💹 View Trade Summary (JSON)</button>
+                <button {btn_light} onclick="viewPage('/visualize_summary')">📊 View Profit Summary Chart</button>
+                <button {btn_light} onclick="viewPage('/wft_summary')">📈 View WFT Summary Chart</button>
+                <button {btn_light} onclick="runTask('/monitor','monitor-btn-silent')">🩺 API Monitor (Alert)</button>
+                <button {btn_light} onclick="viewPage('/explain')">💡 Model Feature Importance (JSON)</button>
+            </div><h2>📄 Logs & Reports</h2><div class="list-group mb-4">
+                <button {btn_light} onclick="viewPage('/download_csv')">⬇ Download Trade Data CSV</button>
+                <button {btn_light} onclick="viewPage('/download_report')">📋 Download Latest Report</button>
+                <button {btn_warning} onclick="viewPage('/fail_log')">❌ View Execution Failure Log</button>
+                <button {btn_warning} onclick="viewPage('/exit_decision_log')">🚪 View Exit Decision Log</button>
+                <button {btn_warning} onclick="viewPage('/fail_entry_log')">🚫 View AI Entry Fail Log</button>
+            </div></div></body></html>"""
     return html_content
 
 
 # === Background Scheduler ===
-# --- Scheduled Tasks ---
 def scheduled_model_retrain_task():
     logging.info("[SCHEDULER] Initiating scheduled model retrain...")
     with app.app_context():
         success, message, samples, duration = _retrain_model_core()
     if success:
         logging.info(
-            f"[SCHEDULER] ✅ Scheduled model retrain completed. Samples: {samples}, "
-            f"Duration: {duration}s. Message: {message}"
+            f"[SCHEDULER] ✅ Retrain completed. Samples: {samples}, Duration: {duration}s. Msg: {message}"
         )
     else:
-        logging.error(f"[SCHEDULER] ❌ Scheduled model retrain failed. Message: {message}")
+        logging.error(f"[SCHEDULER] ❌ Retrain failed. Msg: {message}")
 
 
 def scheduled_report_generation_task():
@@ -1668,7 +1399,6 @@ def scheduled_report_generation_task():
         logging.error("[SCHEDULER] ❌ Scheduled report generation failed.")
 
 
-# --- Scheduler Runner ---
 def run_scheduler():
     schedule.every().day.at("01:00").do(scheduled_model_retrain_task)
     schedule.every().day.at("00:00").do(scheduled_report_generation_task)
@@ -1682,17 +1412,14 @@ def run_scheduler():
 if __name__ == '__main__':
     logging.info("[SERVER_INIT] Flask API service is starting...")
     print("[SERVER_INIT] Flask API service is starting...")
-
-    if not (app.debug and os.environ.get('WERKZEUG_RUN_MAIN') == 'true'):
+    if not (app.debug and os.environ.get('WERKZEUG_RUN_MAIN') == 'true'):  # Corrected E261
         scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
         scheduler_thread.start()
         logging.info("[SERVER_INIT] Background scheduler thread started.")
         print("[SERVER_INIT] Background scheduler thread started.")
     else:
-        logging.info("[SERVER_INIT] Scheduler thread already started by main Werkzeug process or skipped in reloader.")
-        print("[SERVER_INIT] Scheduler thread already started by main Werkzeug process or skipped in reloader.")
-
-    print("Flask API is attempting to run on http://127.0.0.1:5000")  # Corrected F541
-    logging.info("Flask API initialized, attempting to run on http://127.0.0.1:5000")  # Corrected F541
-
+        logging.info("[SERVER_INIT] Scheduler thread already started or skipped in reloader.")
+        print("[SERVER_INIT] Scheduler thread already started or skipped in reloader.")
+    print("Flask API is attempting to run on http://127.0.0.1:5000")
+    logging.info("Flask API initialized, attempting to run on http://127.0.0.1:5000")
     app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
