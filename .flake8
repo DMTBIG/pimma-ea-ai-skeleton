@@ -1,0 +1,12 @@
+[flake8]
+max-line-length = 170
+extend-ignore =
+    E203,   # whitespace before ':'
+    E266,   # too many leading '#' for block comment
+    E501,   # line too long (handled by max-line-length)
+    W293,   # blank line contains whitespace
+    E261,   # at least two spaces before inline comment
+    E302,   # expected 2 blank lines, found 1
+    E305,   # expected 2 blank lines after class or func def
+    W292,   # no newline at end of file
+    F541    # f-string missing placeholders
