@@ -1,5 +1,6 @@
-from flask import Flask, request, jsonify, send_file
-import traceback
+from flask import Flask, jsonify, send_file
+- import traceback
+- import requests
 import os
 import logging
 import json
@@ -49,7 +50,7 @@ except ImportError:
 try:
     import gym
     import stable_baselines3
-    import shimmy  # <--- *** เอา # ออกจากบรรทัดนี้ ***
+
     print("Gym, Stable-Baselines3, and Shimmy are already installed.")
 except ImportError:
     print("stable-baselines3, gym, or shimmy not found, attempting to install all...")
@@ -57,12 +58,11 @@ except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "gym", "stable-baselines3", "shimmy~=2.0"])
     import gym
     import stable_baselines3
-    import shimmy # ตรวจสอบว่า import ได้หลังติดตั้ง
     print("gym, stable-baselines3, and shimmy installed and imported successfully.")
     
-from stable_baselines3 import PPO
+- from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv # อาจจำเป็นถ้า PIMMAEnv ไม่ได้เป็น VecEnv โดยตรง
-from gym import Env, spaces
+- from gym import Env, spaces
 
 # SHAP
 try:
@@ -81,7 +81,7 @@ os.makedirs("logs", exist_ok=True)
 os.makedirs("models", exist_ok=True)
 os.makedirs("presets", exist_ok=True) # Ensure presets folder exists
 baseline_mean = None
-explainer = None 
+explainer = None
 
 # Logging Configuration
 logging.basicConfig(
@@ -294,7 +294,7 @@ def load_model(path=MODEL_PATH):
     
     # เรียก _initialize_shap_explainer() หนึ่งครั้งในตอนท้าย
     # เพื่อให้ explainer ถูกตั้งค่าตามสถานะล่าสุดของ global 'model'
-    _initialize_shap_explainer() 
+    _initialize_shap_explainer()
     
     # การ return ค่าของฟังก์ชัน load_model:
     # อาจจะ return boolean ที่บอกว่า "มีโมเดลพร้อมใช้งานหรือไม่ (รวม fake model)"
